@@ -111,6 +111,8 @@ Real-money execution stays in the CLI: agents research and paper-trade through M
 
 To execute on Polymarket without giving oracle3 a private key, [oracle3-extras](https://github.com/YichengYang-Ethan/oracle3-extras) routes orders through MetaMask Agent Wallet (testnet by default).
 
+To find the same event on Kalshi and Polymarket, `oracle3-extras kairos sync` saves the pairs from [Kairos](https://kairos.trade)'s public matched-market catalog, with their outcomes lined up, as relations that `list_relations` and `check_constraint_live` can use.
+
 If your client ran oracle3 1.2.0, which failed to start with mcp 2.x, refresh uv's cached copy once with `uvx --refresh oracle3 mcp`.
 
 ### Agent skills
