@@ -109,6 +109,8 @@ For Claude Desktop, Cursor and other clients that read an `mcpServers` block:
 
 Real-money execution stays in the CLI: agents research and paper-trade through MCP, and a human signs off on live orders.
 
+To execute on Polymarket without giving oracle3 a private key, [oracle3-extras](https://github.com/YichengYang-Ethan/oracle3-extras) routes orders through MetaMask Agent Wallet (testnet by default).
+
 If your client ran oracle3 1.2.0, which failed to start with mcp 2.x, refresh uv's cached copy once with `uvx --refresh oracle3 mcp`.
 
 ### Agent skills
