@@ -13,7 +13,7 @@ Install with `pip install oracle3`. Run the MCP server with `uvx oracle3 mcp` (1
 
 ## Extensions
 
-- [oracle3-extras](https://github.com/YichengYang-Ethan/oracle3-extras): companion package, like pymc-extras for PyMC. Kairos cross-venue Kalshi–Polymarket pairs as Oracle3 relations, live no-arbitrage scans sized against the order books, and Polymarket execution through MetaMask Agent Wallet. New integrations start there.
+- [oracle3-extras](https://github.com/YichengYang-Ethan/oracle3-extras): companion package, like pymc-extras for PyMC. Kairos cross-venue pairs (Kalshi, Polymarket, Predict.fun, Hyperliquid) as Oracle3 relations, live no-arbitrage scans sized against the order books, and Polymarket execution through MetaMask Agent Wallet. New integrations start there.
 
 ## Source
 

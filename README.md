@@ -139,7 +139,7 @@ Every `market`, `paper` and `trade` command, and every `research` command except
 
 | Feature | Module | What it adds |
 |---|---|---|
-| Kairos cross-venue pairs | `oracle3_extras.market.kairos` | Kalshi–Polymarket pairs from [Kairos](https://kairos.trade)'s public catalog, outcomes lined up, saved as Oracle3 relations |
+| Kairos cross-venue pairs | `oracle3_extras.market.kairos` | Pairs across Kalshi, Polymarket, Predict.fun and Hyperliquid from [Kairos](https://kairos.trade)'s public catalog, outcomes lined up; Kalshi–Polymarket pairs saved as Oracle3 relations |
 | Live no-arbitrage scans | `oracle3_extras.arbitrage` | `check_constraint` over thousands of relations at once, sized against the order books |
 | MetaMask Agent Wallet | `oracle3_extras.trader.metamask` | A `Trader` that executes on Polymarket without giving Oracle3 a private key |
 

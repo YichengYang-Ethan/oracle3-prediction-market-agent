@@ -6,7 +6,7 @@
 
 | Feature | Module | What it does |
 |---|---|---|
-| Kairos cross-venue pairs | `oracle3_extras.market.kairos` | Reads [Kairos](https://kairos.trade)'s public matched-market catalog, lines up the outcomes of each Kalshi–Polymarket pair and saves them as Oracle3 `same_event` or `complement` relations |
+| Kairos cross-venue pairs | `oracle3_extras.market.kairos` | Reads [Kairos](https://kairos.trade)'s public matched-market catalog, lines up the outcomes of every pair across Kalshi, Polymarket, Predict.fun and Hyperliquid, and saves the Kalshi–Polymarket ones as Oracle3 `same_event` or `complement` relations |
 | Live no-arbitrage scans | `oracle3_extras.arbitrage` | Runs `check_constraint` over thousands of relations with batched quotes, then sizes the survivors against the order books |
 | MetaMask Agent Wallet | `oracle3_extras.trader.metamask` | A `Trader` that executes on Polymarket through Agent Wallet, so Oracle3 never holds a private key (testnet by default) |
 
