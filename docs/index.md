@@ -5,6 +5,9 @@
 !!! tip "Trades live on Kalshi, Polymarket and Solana"
     `oracle3 live run` executes with the same engine that runs paper trading, behind pre-trade risk limits and a kill switch. AI agents plug in through the MCP server.
 
+!!! info "Extensions live in oracle3-extras"
+    [oracle3-extras](https://github.com/YichengYang-Ethan/oracle3-extras) adds Kairos cross-venue pairs, live no-arbitrage scans and Polymarket execution through MetaMask Agent Wallet. New integrations and experimental features start there. See [oracle3-extras](extras.md).
+
 ## Install
 
 ```bash
@@ -45,6 +48,7 @@ The [MCP server](mcp.md) exposes 13 tools: market search, quotes, order books, f
 ## Read next
 
 - [MCP server](mcp.md): tools, client configuration and a worked example
+- [oracle3-extras](extras.md): the companion package for integrations and experimental features
 - [Do prediction-market arbitrage edges survive fees?](research/fee-frontier.md): break-even violations under the published fee schedules
 - [CLI quick start](CLI_QUICK_START.md) and [monitoring](CLI_MONITORING.md)
 - [Solana pre-flight risk and submission](architecture.md): local limits, transaction simulation, Jito fallback and failure handling

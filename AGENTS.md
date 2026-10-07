@@ -35,6 +35,8 @@ CI runs all four on every push to `main`. New code needs tests; venue APIs must 
 | `skills/` | Agent skills, mirrored to `.claude/skills/` |
 | `docs/` | MkDocs site, including `docs/research/fee-frontier.md` |
 
+Integrations with third-party services (wallets, data providers, venues) and experimental features belong in [oracle3-extras](https://github.com/YichengYang-Ethan/oracle3-extras), which mirrors these namespaces. Propose them there rather than here.
+
 ## Safety rules
 
 - **Default to paper.** Never run `oracle3 live run` or any command that places real orders unless the user explicitly asks for live trading in this session.

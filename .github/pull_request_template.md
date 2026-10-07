@@ -20,6 +20,7 @@ Closes # <!-- Issue # here -->
 
 <!-- Make sure your pr passes the CI checks and do check the following fields as needed - -->
 
+- [ ] This belongs in Oracle3 rather than [oracle3-extras](https://github.com/YichengYang-Ethan/oracle3-extras) (new integrations and experimental features start there)
 - [ ] My pull request adheres to the code style of this project
 - [ ] My code requires changes to the documentation
 - [ ] I have updated the documentation as required

@@ -21,6 +21,7 @@
 | Costs | Each market's own fee schedule from the venue API (Kalshi taker 0.07·M·C·P·(1−P); Polymarket taker rate·C·p·(1−p)) |
 | Strategies | 6 constraint-based, 2 statistical-arbitrage, 2 model-driven |
 | Agent interfaces | MCP server with 13 tools, JSON CLI, 6 agent skills, Python API |
+| Extensions | [oracle3-extras](https://github.com/YichengYang-Ethan/oracle3-extras): Kairos cross-venue pairs, live no-arbitrage scans, Polymarket execution through MetaMask Agent Wallet |
 | Tests | 600+, with ruff, mypy and codespell in CI |
 | Install | `pip install oracle3` |
 | License | Apache-2.0; the original U Lab portions are MIT (see [NOTICE](NOTICE)) |
@@ -102,7 +103,7 @@ For Claude Desktop, Cursor and other clients that read an `mcpServers` block:
 | `trading_fee` | Fee for one fill under a venue schedule | none |
 | `fair_value` | Probability implied by a price under the Wang transform | none |
 | `list_relation_types` | The supported relations and their bounds | none |
-| `list_relations` | Relations saved locally by the research CLI | reads a local file |
+| `list_relations` | Relations saved locally, for example by `oracle3-extras kairos sync` | reads a local file |
 | `paper_order` | Buy in a local paper ledger, filling against the live book with fees | writes a local file |
 | `paper_portfolio` | Cash, positions and fills in the paper ledger | reads a local file |
 | `paper_reset` | Erase the paper ledger (requires `confirm=true`) | writes a local file |
@@ -131,6 +132,23 @@ If your client ran oracle3 1.2.0, which failed to start with mcp 2.x, refresh uv
 ### JSON CLI
 
 Every `market`, `paper` and `trade` command, and every `research` command except `research memory`, accepts `--json`. A running engine can be paused, resumed, inspected and stopped from another process with `oracle3 trade pause|resume|state|stop --json`. See [AGENTS.md](AGENTS.md) for which commands are read-only.
+
+## What is oracle3-extras?
+
+[oracle3-extras](https://github.com/YichengYang-Ethan/oracle3-extras) is Oracle3's companion package, the way [pymc-extras](https://github.com/pymc-devs/pymc-extras) relates to PyMC. It holds integrations with wallets, data providers and venues, and features that need real-world use before they belong in Oracle3. It mirrors Oracle3's namespaces, so a feature that proves itself moves into Oracle3 with only its import changed.
+
+| Feature | Module | What it adds |
+|---|---|---|
+| Kairos cross-venue pairs | `oracle3_extras.market.kairos` | Kalshi–Polymarket pairs from [Kairos](https://kairos.trade)'s public catalog, outcomes lined up, saved as Oracle3 relations |
+| Live no-arbitrage scans | `oracle3_extras.arbitrage` | `check_constraint` over thousands of relations at once, sized against the order books |
+| MetaMask Agent Wallet | `oracle3_extras.trader.metamask` | A `Trader` that executes on Polymarket without giving Oracle3 a private key |
+
+```bash
+pip install git+https://github.com/YichengYang-Ethan/oracle3-extras.git
+oracle3-extras kairos scan        # read-only: cross-venue edges after fees
+```
+
+**New integrations and experimental features start in oracle3-extras**; see its [contributing guide](https://github.com/YichengYang-Ethan/oracle3-extras/blob/main/CONTRIBUTING.md).
 
 ## What do fees do to the edge?
 
@@ -164,6 +182,7 @@ Buying every outcome of an n-way event costs k(1 − Σp²) per contract, which 
 ```mermaid
 graph TD
     R[Relation store<br/>implication · exclusivity · complement · same event · event sum] --> C[Constraint checker<br/>oracle3.arbitrage + oracle3.fees]
+    X[oracle3-extras<br/>Kairos cross-venue pairs] --> R
     Q[Venue data<br/>Kalshi · Polymarket public APIs] --> C
     C --> S[Strategy layer<br/>6 constraint-based · 2 statistical · 2 model-driven · LLM agents]
     P[Pricing engine<br/>Wang transform, calibrated in Yang 2026] --> S
@@ -202,6 +221,7 @@ Relations and venue quotes feed the constraint checker, which prices every baske
 
 - **Open problems** are tracked as [issues labeled `open-problem`](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/issues?q=is%3Aissue+label%3Aopen-problem): measuring violations against the fee hurdle, evaluating relation discovery, and comparing LLM and market calibration.
 - **Discussions** are open for questions and ideas: [GitHub Discussions](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/discussions).
+- **New integrations** (wallets, data providers, venues) and experimental features start in [oracle3-extras](https://github.com/YichengYang-Ethan/oracle3-extras).
 - **Contributions:** see [CONTRIBUTING.md](.github/CONTRIBUTING.md).
 
 ## How do I cite it?

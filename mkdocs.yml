@@ -51,6 +51,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - MCP server: mcp.md
+  - oracle3-extras: extras.md
   - Research:
       - Do arbitrage edges survive fees?: research/fee-frontier.md
   - Getting Started:

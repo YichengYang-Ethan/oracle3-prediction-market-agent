@@ -45,7 +45,7 @@ The server is listed in the MCP Registry as `io.github.YichengYang-Ethan/oracle3
 | `trading_fee` | `venue`, `price`, `contracts`, `maker`, schedule parameters | Fee for one fill | none |
 | `fair_value` | `market_price`, `lam` | Probability implied under the Wang transform | none |
 | `list_relation_types` | | Supported relations and their bounds | none |
-| `list_relations` | `market_id`, `spread_type`, `status` | Relations saved by the research CLI | reads `~/.oracle3/relations.json` |
+| `list_relations` | `market_id`, `spread_type`, `status` | Relations saved locally, for example by `oracle3-extras kairos sync` | reads `~/.oracle3/relations.json` |
 | `paper_order` | `venue`, `market_id`, `side`, `contracts`, `limit_price` | Fill against the live book, with fees | writes the paper ledger |
 | `paper_portfolio` | | Cash, positions, fill count | reads the paper ledger |
 | `paper_reset` | `confirm` | Fresh ledger | erases the paper ledger |

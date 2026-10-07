@@ -8,6 +8,8 @@ body:
       value: |
         Please make sure this feature request hasn't been already submitted by someone by looking through other open/closed issues
 
+        New integrations (wallets, data providers, venues) and experimental features usually start in [oracle3-extras](https://github.com/YichengYang-Ethan/oracle3-extras); requests for those can go there.
+
   - type: textarea
     id: description
     attributes:

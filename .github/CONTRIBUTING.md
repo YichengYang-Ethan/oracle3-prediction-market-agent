@@ -2,6 +2,10 @@
 
 Thanks for your interest in contributing! Here is everything you need to get started.
 
+## Where should a new feature go?
+
+New integrations with wallets, data providers and venues, and experimental features, start in [oracle3-extras](https://github.com/YichengYang-Ethan/oracle3-extras), the way new PyMC features start in pymc-extras. oracle3-extras mirrors Oracle3's namespaces, so a feature that proves itself moves here with only its import changed; its [contributing guide](https://github.com/YichengYang-Ethan/oracle3-extras/blob/main/CONTRIBUTING.md) says when and how. Fixes and improvements to the existing engine, checks, strategies and MCP server belong in this repository. If you are not sure, open an issue first.
+
 ## Setup
 
 ```bash
