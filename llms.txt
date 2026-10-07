@@ -1,0 +1,35 @@
+# Oracle3
+
+> Open-source trading engine and MCP server for prediction markets. It finds prices of related event contracts that violate probability bounds after each venue's published fees and trades them live on Kalshi, Polymarket and Solana, or on paper, under pre-trade risk limits. The MCP server gives AI agents market data, fee-aware checks and paper execution; live orders run through the CLI.
+
+Install with `pip install oracle3`. Run the MCP server with `uvx oracle3 mcp` (13 tools: market search, quotes, order books, fee-aware constraint checks, a local paper ledger). Python API: `oracle3.arbitrage.check_constraint` and `oracle3.fees`.
+
+## Docs
+
+- [Documentation home](https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/): overview and quick start
+- [MCP server](https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/mcp/): tools, client configuration, examples
+- [Do prediction-market arbitrage edges survive fees?](https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/research/fee-frontier/): break-even violations under Kalshi and Polymarket fees
+- [CLI quick start](https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/CLI_QUICK_START/)
+
+## Extensions
+
+- [oracle3-extras](https://github.com/YichengYang-Ethan/oracle3-extras): companion package, like pymc-extras for PyMC. Kairos cross-venue pairs (Kalshi, Polymarket, Predict.fun, Hyperliquid) as Oracle3 relations, live no-arbitrage scans sized against the order books, and Polymarket execution through MetaMask Agent Wallet. New integrations start there.
+
+## Source
+
+- [Repository](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent)
+- [README](https://raw.githubusercontent.com/YichengYang-Ethan/oracle3-prediction-market-agent/main/README.md)
+- [AGENTS.md](https://raw.githubusercontent.com/YichengYang-Ethan/oracle3-prediction-market-agent/main/AGENTS.md): setup, checks and safety rules for coding agents
+- [Agent skills](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/tree/main/skills)
+- [server.json](https://raw.githubusercontent.com/YichengYang-Ethan/oracle3-prediction-market-agent/main/server.json): MCP Registry manifest
+- [PyPI package](https://pypi.org/project/oracle3/)
+
+## Research
+
+- [Pricing Prediction Markets: Incomplete Markets, Selection Rules, and Calibration Wedges](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6468338): the working paper behind the fair-value engine
+- [Replication package](https://github.com/YichengYang-Ethan/prediction-market-pricing)
+
+## Optional
+
+- [Open problems](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/issues?q=is%3Aissue+label%3Aopen-problem)
+- [Discussions](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/discussions)
