@@ -4,7 +4,7 @@ Instructions for AI coding agents working in this repository. Humans may find it
 
 ## What this project is
 
-Oracle3 is a trading engine (live on Kalshi, Polymarket and Solana, or on paper) and an MCP server for prediction markets. It checks whether prices of related event contracts violate probability bounds after each venue's fees, and paper-trades the baskets that survive under pre-trade risk limits. See [README.md](README.md).
+Oracle3 provides agent tools and execution infrastructure for prediction markets. Its MCP server exposes Kalshi and Polymarket data, fee-aware checks conditional on caller-supplied relationships, and a local paper ledger. The separate trading engine supports paper and live adapters for Kalshi, Polymarket and Solana; shared-fee and spread-executor integration across strategies is incomplete. See [README.md](README.md) and the [agent quickstart](docs/agent-quickstart.md).
 
 ## Setup and checks
 
@@ -34,6 +34,7 @@ CI runs all four on every push to `main`. New code needs tests; venue APIs must 
 | `coinjure/` | Bundled package from the original U Lab codebase (MIT; see NOTICE) |
 | `skills/` | Agent skills, mirrored to `.claude/skills/` |
 | `docs/` | MkDocs site, including `docs/research/fee-frontier.md` |
+| `scripts/check_agent_contracts.py` | Offline regression of tool errors, conditional checks, partial fills and recovery; requires a source checkout |
 
 Integrations with third-party services (wallets, data providers, venues) and experimental features belong in [oracle3-extras](https://github.com/YichengYang-Ethan/oracle3-extras), which mirrors these namespaces. Propose them there rather than here.
 

@@ -10,7 +10,7 @@ New integrations with wallets, data providers and venues, and experimental featu
 
 ```bash
 git clone https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent.git
-cd oracle3
+cd oracle3-prediction-market-agent
 poetry install --with dev,test
 ```
 
@@ -42,8 +42,9 @@ ruff check . && ruff format .
 
 ## Project Layout
 
-See the `Project Structure` section in `README.md` for an overview of the
-codebase. Strategy contributions go in `oracle3/strategy/contrib/`.
+See [Architecture and extensions](../README.md#architecture-and-extensions)
+and the [source layout](../AGENTS.md#layout) for an overview of the codebase.
+Strategy contributions go in `oracle3/strategy/contrib/`.
 
 ## Questions?
 
