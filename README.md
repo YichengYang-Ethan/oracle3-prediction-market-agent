@@ -232,6 +232,8 @@ Citation metadata is in [CITATION.cff](CITATION.cff), and every release is archi
 
 Oracle3 began as `ulab-uiuc/oracle3`, developed by Yicheng Yang and Haofei Yu at U Lab (University of Illinois Urbana-Champaign) under the MIT License, and it bundles the [`coinjure`](https://github.com/ulab-uiuc/prediction-market-cli) package from the same lab. The strategy, pricing, risk, dashboard, and test layers in this repository were added on top of that base; see [NOTICE](NOTICE) for the retained license text.
 
+We acknowledge the foundational work of the Coinjure team at the University of Illinois Urbana-Champaign—Haofei Yu, Yicheng Yang, Yuxiang Liu, and Prof. Jiaxuan You—on which Oracle3 builds.
+
 ## License
 
 Apache 2.0; see [LICENSE](LICENSE). Portions from the original U Lab code remain under the MIT License reproduced in [NOTICE](NOTICE).
