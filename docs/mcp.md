@@ -47,7 +47,7 @@ The server is listed in the MCP Registry as `io.github.YichengYang-Ethan/oracle3
 | Tool | Arguments | Returns | Side effects |
 |---|---|---|---|
 | `search_markets` | `venue`, `query`, `limit`, `series_ticker` | Open markets with best prices | read-only |
-| `get_market` | `venue`, `market_id` | Prices, volume, close time; Kalshi rule fields | read-only |
+| `get_market` | `venue`, `market_id` | Prices, volume, timing and venue-provided rules; Polymarket resolution source | read-only |
 | `get_orderbook` | `venue`, `market_id`, `depth` | YES and NO bids and asks, best first | read-only |
 | `get_quote` | `venue`, `market_id` | Best bid and ask on both sides, the market's fee schedule | read-only |
 | `check_constraint_live` | `relation`, `markets`, `contracts`, `maker` | Every basket's cost, fees and edge, with live quotes | read-only |
@@ -62,9 +62,10 @@ The server is listed in the MCP Registry as `io.github.YichengYang-Ethan/oracle3
 
 Prices are dollars per contract. On Kalshi, `market_id` is the ticker; on Polymarket it is the Gamma market id, "yes" is the first outcome token and "no" the second. The paper ledger lives at `~/.oracle3/mcp_paper_ledger.json` unless `ORACLE3_MCP_LEDGER` points elsewhere.
 
-The current Polymarket normalizer does not return full resolution text. Obtain
-missing rules from the venue's market page and verify the outcome mapping
-before assuming a relationship. The MCP paper ledger is separate from the
+Polymarket market details return `rules` from the upstream `description` and
+`resolution_source` from `resolutionSource`. Obtain missing or ambiguous rules
+from the venue's market page and verify the outcome mapping before assuming a
+relationship. The MCP paper ledger is separate from the
 trading engine's paper state. Use your client's `tools/list` response for the
 installed server's complete JSON input schemas; older releases may differ.
 
@@ -109,7 +110,7 @@ The derivation of what these fees mean for arbitrage is in [Do prediction-market
 Ask an agent: *"Is the Fed-hold contract on Kalshi priced consistently with the same contract on Polymarket after fees?"* A typical tool sequence:
 
 1. `search_markets(venue="kalshi", series_ticker="KXFEDDECISION")` and `search_markets(venue="polymarket", query="fed decision")`
-2. `get_market` on the two candidates, plus the Polymarket market page for missing resolution text; compare their settlement rules and outcome mappings
+2. `get_market` on the two candidates; compare their settlement rules and outcome mappings, consulting venue pages when returned fields are missing or ambiguous
 3. `check_constraint_live(relation="same_event", markets=[{"venue": "kalshi", "market_id": "<ticker>"}, {"venue": "polymarket", "market_id": "<id>"}])`
 
 The result lists both baskets (YES on Kalshi + NO on Polymarket, and the reverse) with the fee on each leg and the edge left after fees.

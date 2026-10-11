@@ -14,7 +14,7 @@
 - Find candidates with `search_markets`; inspect `get_market`, `get_quote`, and `get_orderbook`. MCP venues are `kalshi` and `polymarket`. Prices are dollars per contract; sizes are contracts. Kalshi market IDs are tickers; Polymarket IDs are Gamma market IDs, not token IDs.
 - Use `check_constraint` for supplied quotes without network access; use `check_constraint_live` for public live quotes and venue fee schedules. Relation labels are `implication`, `exclusivity`, `complement`, `same_event`, and `event_sum`.
 - A result is conditional on the caller's relation and full fills at the quoted prices. The checker does not verify settlement rules or executable depth. On current main, `assessment` explicitly marks relation and execution as unverified. A positive gross violation can have a negative edge after fees.
-- `get_market` returns Kalshi rule text. Its current Polymarket response includes outcome metadata but omits full resolution text; obtain missing rules from the venue before treating markets as equivalent.
+- `get_market` returns Kalshi `rules_primary` and `rules_secondary`, and Polymarket `rules` and `resolution_source`, when available from the venue. If these fields are missing or ambiguous, check the venue's contract rules before treating markets as equivalent.
 - `paper_order` buys against a live-book snapshot and writes a local ledger. `paper_portfolio` reads it; `paper_reset(confirm=true)` erases its positions/history. The ledger carries positions at cost and does not track resolution or P&L. No MCP tool places real orders.
 - `fair_value` returns a probability implied by a chosen Wang-transform parameter, not independently verified event truth. Recorded or fitted relations also require interpretation.
 
