@@ -65,10 +65,11 @@ equivalence, available depth or full execution. Current main exposes
 `relation_verified: false`, `execution_verified: false` and
 `conditional_on_relation: true` in its `assessment` object.
 
-Read contract rules and outcome mappings before using a relationship. The
-current Polymarket adapter omits full resolution text; obtain it from the
-venue's market page. Event sums require mutually exclusive, exhaustive
-outcomes. The MCP paper ledger is independent of the engine's paper state.
+Read contract rules and outcome mappings before using a relationship.
+Polymarket market details expose `rules` and `resolution_source` when the
+upstream API supplies them; check the venue's market page if fields are missing
+or ambiguous. Event sums require mutually exclusive, exhaustive outcomes.
+The MCP paper ledger is independent of the engine's paper state.
 
 ## Inspect the evidence
 

@@ -128,9 +128,10 @@ independently verify an event probability.
    `{"venue":"polymarket","query":"fed decision","limit":10}`.
 2. Pass returned IDs to `get_market`, for example
    `{"venue":"kalshi","market_id":"<returned ticker>"}`. Compare outcomes,
-   deadlines, and settlement sources. Kalshi responses include rule text. The
-   current Polymarket response omits full resolution text: obtain missing rules
-   from the venue's contract page or API before assuming equivalence.
+   deadlines, and settlement sources. Kalshi responses include `rules_primary`
+   and `rules_secondary`; Polymarket responses include `rules` and
+   `resolution_source` when supplied by the venue. If fields are missing or
+   ambiguous, check the venue's contract rules before assuming equivalence.
 3. State the proposed relation and supporting rules. `event_sum` requires a
    complete, mutually exclusive outcome set; a shared event ID is insufficient.
    If rules are missing or incompatible, report the unresolved question.

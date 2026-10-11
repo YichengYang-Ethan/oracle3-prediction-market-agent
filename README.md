@@ -113,7 +113,7 @@ The positive edge is conditional on the supplied relationship and full fills at 
 For a live-data research task, an agent can:
 
 1. **Discover:** call `search_markets` on Kalshi and Polymarket for candidate contracts.
-2. **Read the rules:** call `get_market` for each candidate. Kalshi responses include rule fields; the current Polymarket adapter does not expose full resolution text, so obtain it from the venue's market page. Compare outcome definitions, dates, settlement sources and any void/cancellation terms. If the rules are unavailable, leave the relationship unverified.
+2. **Read the rules:** call `get_market` for each candidate. Kalshi responses include `rules_primary` and `rules_secondary`; Polymarket responses include `rules` and `resolution_source` from the upstream market details. Compare outcome definitions, dates, settlement sources and any void/cancellation terms. Check the venue's market page when fields are missing or ambiguous, and leave unresolved relationships unverified.
 3. **State the relationship:** choose `implication`, `exclusivity`, `complement`, `same_event` or `event_sum`, with the evidence supporting that choice. Event sums require mutually exclusive outcomes covering every possible result.
 4. **Calculate:** call `check_constraint_live` for current quotes and fee schedules. Inspect `best`, `missing_quotes`, per-leg costs and net edge; use `get_orderbook` to inspect available size.
 5. **Report:** return market IDs, the assumed relationship, the quoted prices, fees, size and unresolved limitations. A positive check does not verify settlement equivalence or execution.
