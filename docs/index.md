@@ -45,9 +45,14 @@ claude mcp add oracle3 -- uvx oracle3 mcp
 
 The [MCP server](mcp.md) exposes 13 tools: market search, quotes, order books, fee-aware constraint checks and a local paper ledger.
 
+The [agent contract harness](agent-harness.md) replays frozen tool-error,
+partial-fill and recovery scenarios offline. It produces structured evidence
+about the tool environment, without measuring LLM competence or profitability.
+
 ## Read next
 
 - [MCP server](mcp.md): tools, client configuration and a worked example
+- [Agent contract harness](agent-harness.md): offline regression cases, execution states and migration notes
 - [oracle3-extras](extras.md): the companion package for integrations and experimental features
 - [Do prediction-market arbitrage edges survive fees?](research/fee-frontier.md): break-even violations under the published fee schedules
 - [CLI quick start](CLI_QUICK_START.md) and [monitoring](CLI_MONITORING.md)

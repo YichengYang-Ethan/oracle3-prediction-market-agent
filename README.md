@@ -21,6 +21,7 @@
 | Costs | Each market's own fee schedule from the venue API (Kalshi taker 0.07·M·C·P·(1−P); Polymarket taker rate·C·p·(1−p)) |
 | Strategies | 6 constraint-based, 2 statistical-arbitrage, 2 model-driven |
 | Agent interfaces | MCP server with 13 tools, JSON CLI, 6 agent skills, Python API |
+| Agent contracts | Offline replay of tool errors, conditional checks, partial fills and recovery failures; structured JSON evidence |
 | Extensions | [oracle3-extras](https://github.com/YichengYang-Ethan/oracle3-extras): Kairos cross-venue pairs, live no-arbitrage scans, Polymarket execution through MetaMask Agent Wallet |
 | Tests | 600+, with ruff, mypy and codespell in CI |
 | Install | `pip install oracle3` |
@@ -132,6 +133,31 @@ If your client ran oracle3 1.2.0, which failed to start with mcp 2.x, refresh uv
 ### JSON CLI
 
 Every `market`, `paper` and `trade` command, and every `research` command except `research memory`, accepts `--json`. A running engine can be paused, resumed, inspected and stopped from another process with `oracle3 trade pause|resume|state|stop --json`. See [AGENTS.md](AGENTS.md) for which commands are read-only.
+
+### Agent contract harness
+
+An agent needs to distinguish an arithmetic result from a verified relation,
+and an attempted recovery from a confirmed recovery. Constraint results include
+an `assessment` object stating that settlement relations and execution have not
+been verified. `SpreadExecutor` reports confirmed fills, recovery attempts,
+known residual exposure and whether the caller must reconcile uncertain state.
+Sequential orders are not atomic.
+
+From a development checkout, replay the frozen cases without credentials,
+network calls or real orders:
+
+```bash
+python scripts/check_agent_contracts.py --output agent-contracts.json
+```
+
+The runner checks actual tool and executor behavior against explicit
+expectations, returns a failing exit code on regressions, and runs in CI with
+both supported MCP SDK environments. It evaluates the tool environment, not
+LLM reasoning, strategy profitability or Skill effectiveness. See the
+[harness and migration notes](docs/agent-harness.md).
+
+CLI discovery and `oracle3 mcp` load command modules on demand; starting the
+MCP entry point does not import unrelated live traders or strategy providers.
 
 ## What is oracle3-extras?
 

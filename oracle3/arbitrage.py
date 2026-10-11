@@ -2,10 +2,11 @@
 
 Related contracts are bound together by the axioms of probability. When quoted
 prices break one of those bounds, a basket of contracts that pays at least a
-known amount in every state can be bought for less than that amount. For each
-supported relation this module finds the cheapest such basket at executable
-prices, its guaranteed payoff, the venue fee on every leg, and the edge left
-after fees.
+known amount in every state can be bought for less than that amount, provided
+the stated relation holds. For each supported relation this module calculates
+candidate baskets at the supplied prices, their conditional payoff bounds,
+the venue fee on every leg, and the edge left after fees. It does not verify
+resolution rules or available order-book depth.
 
 Relations (quotes are passed in the order shown):
 
@@ -37,6 +38,7 @@ cost of capital locked until resolution are not modeled.
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass, field
 from decimal import Decimal
 from typing import Any, Literal
@@ -184,6 +186,11 @@ class ConstraintCheck:
             'best': best.to_dict() if best else None,
             'baskets': [b.to_dict() for b in self.baskets],
             'missing_quotes': self.missing_quotes,
+            'assessment': {
+                'relation_verified': False,
+                'execution_verified': False,
+                'conditional_on_relation': True,
+            },
             'assumptions': list(ASSUMPTIONS),
         }
 
@@ -216,6 +223,28 @@ def _candidates(relation: str, n: int) -> list[tuple[str, list[tuple[int, Side]]
     )
 
 
+def _validate_quotes(quotes: list[Quote]) -> None:
+    """Validate every supplied field before candidate baskets can skip any leg."""
+    identities: set[tuple[str, str]] = set()
+    for quote in quotes:
+        if not isinstance(quote.market_id, str) or not quote.market_id.strip():
+            raise ValueError('market_id must be a nonblank string')
+        if not isinstance(quote.venue, str) or not quote.venue.strip():
+            raise ValueError('venue must be a nonblank string')
+        identity = (quote.venue.strip().lower(), quote.market_id.strip())
+        if identity in identities:
+            raise ValueError(f'duplicate contract: {identity[0]}:{identity[1]}')
+        identities.add(identity)
+        # Validate even unused fields and quotes after an earlier missing leg.
+        for name in ('yes_bid', 'yes_ask', 'no_bid', 'no_ask'):
+            price = getattr(quote, name)
+            if price is not None and (not math.isfinite(price) or not 0 <= price <= 1):
+                raise ValueError(
+                    f'{quote.venue}:{quote.market_id} {name} must be finite '
+                    'and between 0 and 1'
+                )
+
+
 def check_constraint(
     relation: str,
     quotes: list[Quote],
@@ -223,7 +252,11 @@ def check_constraint(
     contracts: float = 1.0,
     maker: bool = False,
 ) -> ConstraintCheck:
-    """Evaluate every basket for ``relation`` at the quoted prices.
+    """Calculate price bounds conditional on the supplied ``relation``.
+
+    This does not verify the relation's resolution rules, order-book depth or
+    whether the basket can fill. All supplied prices must be finite and in
+    [0, 1]; prices used for fee calculations must be strictly between 0 and 1.
 
     Args:
         relation: One of :data:`RELATIONS`.
@@ -241,8 +274,9 @@ def check_constraint(
         raise ValueError(f'{relation} needs exactly 2 quotes, got {len(quotes)}')
     if not pairwise and len(quotes) < 2:
         raise ValueError(f'{relation} needs at least 2 quotes, got {len(quotes)}')
-    if contracts <= 0:
-        raise ValueError('contracts must be positive')
+    if not math.isfinite(contracts) or contracts <= 0:
+        raise ValueError('contracts must be finite and positive')
+    _validate_quotes(quotes)
 
     result = ConstraintCheck(
         relation=relation,

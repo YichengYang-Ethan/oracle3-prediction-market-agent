@@ -11,6 +11,7 @@ Covers:
 
 from __future__ import annotations
 
+import math
 import tempfile
 from pathlib import Path
 
@@ -129,7 +130,6 @@ class TestProbitDistortion:
 
 
 class TestDualPowerDistortion:
-
     def test_identity_at_zero_rho(self):
         d = DualPowerDistortion(rho=0.0)
         for p in [0.1, 0.3, 0.5, 0.7, 0.9]:
@@ -158,7 +158,6 @@ class TestDualPowerDistortion:
 
 
 class TestProportionalHazardDistortion:
-
     def test_identity_at_zero_rho(self):
         d = ProportionalHazardDistortion(rho=0.0)
         for p in [0.1, 0.3, 0.5, 0.7, 0.9]:
@@ -175,7 +174,6 @@ class TestProportionalHazardDistortion:
 
 
 class TestDistortionComparison:
-
     def test_compare(self):
         distortions = [
             ProbitDistortion(0.15),
@@ -195,7 +193,6 @@ class TestDistortionComparison:
 
 
 class TestOnlineCalibrator:
-
     def _make_calibrator(self) -> OnlineCalibrator:
         """Create a calibrator with a temp cache path."""
         tmp = tempfile.mkdtemp()
@@ -270,7 +267,6 @@ class TestOnlineCalibrator:
 
 
 class TestFairValueEstimator:
-
     def test_basic_estimate(self):
         est = FairValueEstimator()
         result = est.estimate(0.57, category='default')
@@ -302,19 +298,109 @@ class TestFairValueEstimator:
             assert sym in results
             assert results[sym].market_price == prices[sym]
 
-    def test_rank_opportunities(self):
+    @pytest.mark.parametrize('price', [0.02, 0.2, 0.5, 0.8, 0.98])
+    def test_decomposition_does_not_imply_mispricing(self, price):
+        result = FairValueEstimator().estimate(price)
+        assert result.mispricing_signal == 0.0
+        assert result.reference_probability is None
+        assert result.benchmark_market_price is None
+
+    def test_rank_excludes_decomposition_only_estimates(self):
         est = FairValueEstimator()
         prices = {'A': 0.55, 'B': 0.70, 'C': 0.30}
         results = est.estimate_batch(prices)
-        ranked = est.rank_opportunities(results, min_confidence=0.0, premium_alpha_only=False)
-        assert len(ranked) == 3
+        ranked = est.rank_opportunities(
+            results, min_confidence=0.0, premium_alpha_only=False
+        )
+        assert ranked == []
+
+    @pytest.mark.parametrize('price', [0.5, 0.65])
+    def test_signal_compares_independent_forecast_with_model_price(
+        self, tmp_path, price
+    ):
+        cal = OnlineCalibrator(default_lambda=0.2, cache_path=tmp_path / 'cal.json')
+        est = FairValueEstimator(calibrator=cal, use_paper_coefficients=False)
+        decomposition = est.estimate(price)
+        result = est.estimate(price, reference_probability=0.5)
+
+        # Independent oracle: Wang(0.5, 0.2) = Phi(0.2).
+        expected_price = 0.5 * (1.0 + math.erf(0.2 / math.sqrt(2.0)))
+        assert result.reference_probability == 0.5
+        assert result.benchmark_market_price == pytest.approx(expected_price, abs=1e-7)
+        assert result.mispricing_signal == pytest.approx(
+            price - expected_price, abs=1e-7
+        )
+        assert result.fair_value == decomposition.fair_value
+        assert result.risk_premium == decomposition.risk_premium
+
+    def test_identity_model_ranks_only_supplied_nonzero_forecasts(self, tmp_path):
+        cal = OnlineCalibrator(default_lambda=0.0, cache_path=tmp_path / 'cal.json')
+        est = FairValueEstimator(calibrator=cal, use_paper_coefficients=False)
+        results = est.estimate_batch(
+            {'over': 0.6, 'under': 0.4, 'equal': 0.5, 'missing': 0.9},
+            reference_probabilities={'over': 0.4, 'under': 0.7, 'equal': 0.5},
+        )
+
+        assert results['over'].mispricing_signal == pytest.approx(0.2, abs=1e-7)
+        assert results['under'].mispricing_signal == pytest.approx(-0.3, abs=1e-7)
+        assert results['equal'].mispricing_signal == 0.0
+        assert results['missing'].mispricing_signal == 0.0
+        ranked = est.rank_opportunities(
+            results,
+            min_confidence=0.0,
+            premium_alpha_only=False,
+        )
+        assert [symbol for symbol, _ in ranked] == ['under', 'over']
+
+    @pytest.mark.parametrize('price', [0.0, 0.005, 0.995, 1.0])
+    def test_tail_quote_matches_identity_forecast_without_clipping(
+        self, tmp_path, price
+    ):
+        cal = OnlineCalibrator(default_lambda=0.0, cache_path=tmp_path / 'cal.json')
+        est = FairValueEstimator(calibrator=cal, use_paper_coefficients=False)
+        result = est.estimate(price, reference_probability=price)
+        assert result.market_price == price
+        assert result.benchmark_market_price == pytest.approx(price, abs=1e-7)
+        assert result.fair_value == pytest.approx(price, abs=1e-7)
+        assert result.mispricing_signal == 0.0
+        if price in (0.0, 1.0):
+            assert result.fair_value == price
+            assert result.risk_premium == 0.0
+
+    def test_roundtrip_approximation_is_not_a_signal(self):
+        est = FairValueEstimator()
+        decomposition = est.estimate(0.8)
+        result = est.estimate(0.8, reference_probability=decomposition.fair_value)
+        assert result.mispricing_signal == 0.0
+
+    @pytest.mark.parametrize('reference', [0.0, 1.0])
+    def test_reference_probability_endpoints(self, reference):
+        result = FairValueEstimator().estimate(0.5, reference_probability=reference)
+        assert result.benchmark_market_price == reference
+        assert result.mispricing_signal == 0.5 - reference
+
+    @pytest.mark.parametrize('reference', [-0.01, 1.01, math.nan, math.inf, -math.inf])
+    def test_invalid_reference_is_rejected(self, reference):
+        with pytest.raises(ValueError, match='reference_probability'):
+            FairValueEstimator().estimate(0.5, reference_probability=reference)
+
+    @pytest.mark.parametrize('price', [-0.2, 2.0, math.nan, math.inf, -math.inf])
+    def test_invalid_market_price_is_rejected(self, price):
+        with pytest.raises(ValueError, match='market_price'):
+            FairValueEstimator().estimate(price)
+
+    @pytest.mark.parametrize('lam', [math.nan, math.inf, -math.inf])
+    def test_nonfinite_calibration_is_rejected(self, tmp_path, lam):
+        cal = OnlineCalibrator(default_lambda=lam, cache_path=tmp_path / 'cal.json')
+        est = FairValueEstimator(calibrator=cal, use_paper_coefficients=False)
+        with pytest.raises(ValueError, match='lambda'):
+            est.estimate(0.5, reference_probability=0.4)
 
 
 # ── Premium tracker tests ────────────────────────────────────────────────
 
 
 class TestPremiumTracker:
-
     def test_record_and_snapshot(self):
         tracker = PremiumTracker(min_observations_for_fit=5)
         # Simulate decaying premium
@@ -367,7 +453,6 @@ class TestPremiumTracker:
 
 
 class TestDecayModel:
-
     def test_predict(self):
         model = DecayModel(gamma_1=0.04, gamma_2=0.01, n_obs=100)
         # At tau=1: 0.04 + 0.01 = 0.05
@@ -386,7 +471,6 @@ class TestDecayModel:
 
 
 class TestContractScorer:
-
     def test_extract_features(self):
         scorer = ContractScorer()
         f = scorer.extract_features(
@@ -427,7 +511,6 @@ class TestContractScorer:
 
 
 class TestDistortionValidation:
-
     def test_estimate_risk_premium(self):
         from oracle3.market.validation import estimate_risk_premium
 
@@ -455,6 +538,7 @@ class TestDistortionValidation:
         prices = []
         outcomes = []
         import random
+
         random.seed(42)
         for _ in range(200):
             p_true = random.uniform(0.1, 0.9)

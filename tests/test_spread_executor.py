@@ -1,4 +1,4 @@
-"""Tests for SpreadExecutor -- atomic multi-leg spread execution.
+"""Tests for sequential spread execution and truthful recovery state.
 
 Covers: successful 2-leg spread, auto-unwind on leg 2 failure,
 all legs succeed, execute_pair_spread convenience method.
@@ -6,7 +6,11 @@ all legs succeed, execute_pair_spread convenience method.
 
 from __future__ import annotations
 
+import json
 from decimal import Decimal
+from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from oracle3.data.market_data_manager import MarketDataManager
 from oracle3.order.order_book import Level, OrderBook
@@ -19,7 +23,13 @@ from oracle3.trader.spread_executor import (
     SpreadLeg,
     SpreadOrderResult,
 )
-from oracle3.trader.types import OrderFailureReason, PlaceOrderResult, TradeSide
+from oracle3.trader.types import (
+    Order,
+    OrderFailureReason,
+    OrderStatus,
+    PlaceOrderResult,
+    TradeSide,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -40,8 +50,7 @@ def _make_ticker(
 
 
 def _make_trader(
-    tickers_with_books: dict[PolyMarketTicker, tuple[Decimal, Decimal]]
-    | None = None,
+    tickers_with_books: dict[PolyMarketTicker, tuple[Decimal, Decimal]] | None = None,
     cash: Decimal = Decimal('10000'),
 ) -> PaperTrader:
     """Create a PaperTrader with 100% fill, no commission, no risk checks."""
@@ -97,7 +106,6 @@ def _seed_position(
 
 
 class TestSpreadDataClasses:
-
     def test_spread_leg_creation(self):
         t = _make_ticker('A')
         leg = SpreadLeg(
@@ -119,7 +127,7 @@ class TestSpreadDataClasses:
 
     def test_spread_order_result_all_filled_empty(self):
         r = SpreadOrderResult(success=True, leg_results=[])
-        assert r.all_filled is True  # vacuously true
+        assert r.all_filled is False
 
     def test_spread_order_result_failure(self):
         r = SpreadOrderResult(
@@ -136,7 +144,6 @@ class TestSpreadDataClasses:
 
 
 class TestSpreadExecutorEmpty:
-
     async def test_empty_legs_returns_failure(self):
         trader = _make_trader()
         executor = SpreadExecutor(trader)
@@ -151,7 +158,6 @@ class TestSpreadExecutorEmpty:
 
 
 class TestSpreadExecutorSuccess:
-
     async def test_two_leg_buy_buy(self):
         """Both legs are BUY orders -- both should fill."""
         ticker_a = _make_ticker('A')
@@ -165,12 +171,8 @@ class TestSpreadExecutorSuccess:
         )
         executor = SpreadExecutor(trader)
         legs = [
-            SpreadLeg(
-                TradeSide.BUY, ticker_a, Decimal('0.55'), Decimal('10')
-            ),
-            SpreadLeg(
-                TradeSide.BUY, ticker_b, Decimal('0.45'), Decimal('10')
-            ),
+            SpreadLeg(TradeSide.BUY, ticker_a, Decimal('0.55'), Decimal('10')),
+            SpreadLeg(TradeSide.BUY, ticker_b, Decimal('0.45'), Decimal('10')),
         ]
 
         result = await executor.execute_spread(legs)
@@ -195,12 +197,8 @@ class TestSpreadExecutorSuccess:
 
         executor = SpreadExecutor(trader)
         legs = [
-            SpreadLeg(
-                TradeSide.BUY, ticker_a, Decimal('0.55'), Decimal('10')
-            ),
-            SpreadLeg(
-                TradeSide.SELL, ticker_b, Decimal('0.45'), Decimal('10')
-            ),
+            SpreadLeg(TradeSide.BUY, ticker_a, Decimal('0.55'), Decimal('10')),
+            SpreadLeg(TradeSide.SELL, ticker_b, Decimal('0.45'), Decimal('10')),
         ]
 
         result = await executor.execute_spread(legs)
@@ -240,7 +238,6 @@ class TestSpreadExecutorSuccess:
 
 
 class TestSpreadExecutorUnwind:
-
     async def test_unwind_on_second_leg_failure(self):
         """Leg 1 fills, leg 2 fails (insufficient cash) => unwind leg 1."""
         ticker_a = _make_ticker('A')
@@ -256,12 +253,8 @@ class TestSpreadExecutorUnwind:
         )
         executor = SpreadExecutor(trader)
         legs = [
-            SpreadLeg(
-                TradeSide.BUY, ticker_a, Decimal('0.55'), Decimal('10')
-            ),
-            SpreadLeg(
-                TradeSide.BUY, ticker_b, Decimal('0.95'), Decimal('10')
-            ),
+            SpreadLeg(TradeSide.BUY, ticker_a, Decimal('0.55'), Decimal('10')),
+            SpreadLeg(TradeSide.BUY, ticker_b, Decimal('0.95'), Decimal('10')),
         ]
 
         result = await executor.execute_spread(legs)
@@ -284,17 +277,11 @@ class TestSpreadExecutorUnwind:
         )
         executor = SpreadExecutor(trader)
         legs = [
-            SpreadLeg(
-                TradeSide.BUY, ticker_a, Decimal('0.55'), Decimal('10')
-            ),
-            SpreadLeg(
-                TradeSide.BUY, ticker_b, Decimal('0.95'), Decimal('10')
-            ),
+            SpreadLeg(TradeSide.BUY, ticker_a, Decimal('0.55'), Decimal('10')),
+            SpreadLeg(TradeSide.BUY, ticker_b, Decimal('0.95'), Decimal('10')),
         ]
 
-        result = await executor.execute_spread(
-            legs, unwind_on_partial=False
-        )
+        result = await executor.execute_spread(legs, unwind_on_partial=False)
         assert result.success is False
         assert result.hedged is False
         assert result.unwind_details == ''
@@ -309,9 +296,7 @@ class TestSpreadExecutorUnwind:
         )
         executor = SpreadExecutor(trader)
         legs = [
-            SpreadLeg(
-                TradeSide.BUY, ticker_a, Decimal('0.55'), Decimal('10')
-            ),
+            SpreadLeg(TradeSide.BUY, ticker_a, Decimal('0.55'), Decimal('10')),
         ]
 
         result = await executor.execute_spread(legs)
@@ -353,7 +338,6 @@ class TestSpreadExecutorUnwind:
 
 
 class TestSpreadExecutorPairSpread:
-
     async def test_pair_spread_success(self):
         """Buy A, sell B using best ask/bid automatically."""
         ticker_a = _make_ticker('A')
@@ -403,9 +387,7 @@ class TestSpreadExecutorPairSpread:
         ticker_a = _make_ticker('A')
         ticker_b = _make_ticker('B')
 
-        trader = _make_trader(
-            {ticker_a: (Decimal('0.45'), Decimal('0.55'))}
-        )
+        trader = _make_trader({ticker_a: (Decimal('0.45'), Decimal('0.55'))})
 
         executor = SpreadExecutor(trader)
         result = await executor.execute_pair_spread(
@@ -423,17 +405,12 @@ class TestSpreadExecutorPairSpread:
 
 
 class TestSpreadOrderResultAllFilled:
-
     async def test_all_filled_true_on_full_fills(self):
         ticker_a = _make_ticker('A')
-        trader = _make_trader(
-            {ticker_a: (Decimal('0.45'), Decimal('0.55'))}
-        )
+        trader = _make_trader({ticker_a: (Decimal('0.45'), Decimal('0.55'))})
         executor = SpreadExecutor(trader)
         legs = [
-            SpreadLeg(
-                TradeSide.BUY, ticker_a, Decimal('0.55'), Decimal('10')
-            ),
+            SpreadLeg(TradeSide.BUY, ticker_a, Decimal('0.55'), Decimal('10')),
         ]
         result = await executor.execute_spread(legs)
         assert result.all_filled is True
@@ -458,18 +435,13 @@ class TestSpreadOrderResultAllFilled:
 
 
 class TestSpreadExecutorEdgeCases:
-
     async def test_single_leg_spread(self):
         """A single-leg 'spread' should work fine."""
         ticker = _make_ticker('X')
-        trader = _make_trader(
-            {ticker: (Decimal('0.45'), Decimal('0.55'))}
-        )
+        trader = _make_trader({ticker: (Decimal('0.45'), Decimal('0.55'))})
         executor = SpreadExecutor(trader)
         legs = [
-            SpreadLeg(
-                TradeSide.BUY, ticker, Decimal('0.55'), Decimal('5')
-            ),
+            SpreadLeg(TradeSide.BUY, ticker, Decimal('0.55'), Decimal('5')),
         ]
         result = await executor.execute_spread(legs)
         assert result.success is True
@@ -488,12 +460,8 @@ class TestSpreadExecutorEdgeCases:
         )
         executor = SpreadExecutor(trader)
         legs = [
-            SpreadLeg(
-                TradeSide.BUY, ticker_a, Decimal('0.55'), Decimal('10')
-            ),
-            SpreadLeg(
-                TradeSide.BUY, ticker_b, Decimal('0.35'), Decimal('10')
-            ),
+            SpreadLeg(TradeSide.BUY, ticker_a, Decimal('0.55'), Decimal('10')),
+            SpreadLeg(TradeSide.BUY, ticker_b, Decimal('0.35'), Decimal('10')),
         ]
 
         result = await executor.execute_spread(legs)
@@ -506,3 +474,269 @@ class TestSpreadExecutorEdgeCases:
         assert pos_a.quantity == Decimal('10')
         assert pos_b is not None
         assert pos_b.quantity == Decimal('10')
+
+
+def _confirmed_order(
+    ticker: PolyMarketTicker,
+    filled: str = '10',
+    *,
+    side: TradeSide = TradeSide.BUY,
+    status: OrderStatus = OrderStatus.FILLED,
+    remaining: str = '0',
+) -> PlaceOrderResult:
+    return PlaceOrderResult(
+        order=Order(
+            status=status,
+            side=side,
+            ticker=ticker,
+            limit_price=Decimal('0.50'),
+            filled_quantity=Decimal(filled),
+            average_price=Decimal('0.50'),
+            trades=[],
+            remaining=Decimal(remaining),
+            commission=Decimal('0'),
+        )
+    )
+
+
+def _rejected_order() -> PlaceOrderResult:
+    return PlaceOrderResult(failure_reason=OrderFailureReason.RISK_CHECK_FAILED)
+
+
+def _residuals(result: SpreadOrderResult) -> dict[str, Decimal]:
+    return {item.ticker.symbol: item.quantity for item in result.residual_exposures}
+
+
+class TestSpreadRecoveryContract:
+    @pytest.fixture
+    def setup_spread(self):
+        tickers = [_make_ticker(symbol) for symbol in ('A', 'B', 'C')]
+        trader = _make_trader({t: (Decimal('.49'), Decimal('.50')) for t in tickers})
+        legs = [
+            SpreadLeg(TradeSide.BUY, t, Decimal('.50'), Decimal('10')) for t in tickers
+        ]
+        return trader, legs
+
+    async def test_partial_fill_stops_later_legs_and_reports_actual_exposure(
+        self, setup_spread
+    ):
+        trader, legs = setup_spread
+        replies = [
+            _confirmed_order(legs[0].ticker),
+            _confirmed_order(
+                legs[1].ticker, '1', status=OrderStatus.PARTIALLY_FILLED, remaining='9'
+            ),
+        ]
+        with patch.object(
+            trader, 'place_order', AsyncMock(side_effect=replies)
+        ) as place:
+            result = await SpreadExecutor(trader).execute_spread(
+                legs, unwind_on_partial=False
+            )
+        assert place.await_count == 2
+        assert not result.success and not result.all_filled and not result.hedged
+        assert _residuals(result) == {'A': Decimal('10'), 'B': Decimal('1')}
+        assert result.execution_uncertain and result.requires_reconciliation
+        assert result.uncertain_leg_indices == [2]
+        payload = json.loads(json.dumps(result.to_payload()))
+        assert payload['requested_legs'][1]['quantity'] == '10'
+        assert payload['leg_results'][1]['order']['filled_quantity'] == '1'
+
+    @pytest.mark.parametrize(
+        'status,uncertain',
+        [
+            (OrderStatus.CANCELLED, False),
+            (OrderStatus.PARTIALLY_FILLED, True),
+        ],
+    )
+    async def test_unwind_includes_current_partial_leg_but_pending_order_prevents_hedged(
+        self, setup_spread, status, uncertain
+    ):
+        trader, legs = setup_spread
+        replies = [
+            _confirmed_order(legs[0].ticker),
+            _confirmed_order(legs[1].ticker, '1', status=status, remaining='9'),
+            _confirmed_order(legs[1].ticker, '1', side=TradeSide.SELL),
+            _confirmed_order(legs[0].ticker, side=TradeSide.SELL),
+        ]
+        with patch.object(
+            trader, 'place_order', AsyncMock(side_effect=replies)
+        ) as place:
+            result = await SpreadExecutor(trader).execute_spread(legs)
+        assert not result.success and not result.all_filled
+        assert result.hedged is (not uncertain)
+        assert result.execution_uncertain is uncertain
+        assert result.requires_reconciliation is uncertain
+        assert not result.residual_exposures
+        assert [c.kwargs['quantity'] for c in place.await_args_list] == [
+            Decimal('10'),
+            Decimal('10'),
+            Decimal('1'),
+            Decimal('10'),
+        ]
+        assert [item.leg_index for item in result.unwind_results] == [2, 1]
+        assert all(item.result is not None for item in result.unwind_results)
+
+    async def test_failed_unwind_retains_exposure(self, setup_spread):
+        trader, legs = setup_spread
+        replies = [
+            _confirmed_order(legs[0].ticker),
+            _rejected_order(),
+            _rejected_order(),
+        ]
+        with patch.object(trader, 'place_order', AsyncMock(side_effect=replies)):
+            result = await SpreadExecutor(trader).execute_spread(legs)
+        assert not result.hedged and not result.execution_uncertain
+        assert result.requires_reconciliation
+        assert _residuals(result) == {'A': Decimal('10')}
+        assert result.unwind_results[0].failure_reason == 'risk_check_failed'
+        assert 'FAILED' in result.unwind_details
+
+    @pytest.mark.parametrize(
+        'status,uncertain',
+        [
+            (OrderStatus.CANCELLED, False),
+            (OrderStatus.PARTIALLY_FILLED, True),
+        ],
+    )
+    async def test_partial_unwind_reports_only_confirmed_reduction(
+        self, setup_spread, status, uncertain
+    ):
+        trader, legs = setup_spread
+        replies = [
+            _confirmed_order(legs[0].ticker),
+            _rejected_order(),
+            _confirmed_order(
+                legs[0].ticker, '4', side=TradeSide.SELL, status=status, remaining='6'
+            ),
+        ]
+        with patch.object(trader, 'place_order', AsyncMock(side_effect=replies)):
+            result = await SpreadExecutor(trader).execute_spread(legs)
+        assert not result.hedged
+        assert _residuals(result) == {'A': Decimal('6')}
+        assert result.execution_uncertain is uncertain
+        assert result.unwind_results[0].execution_uncertain is uncertain
+        assert result.requires_reconciliation
+
+    async def test_leg_exception_recovers_prior_fills_without_claiming_flat(
+        self, setup_spread
+    ):
+        trader, legs = setup_spread
+        replies = [
+            _confirmed_order(legs[0].ticker),
+            TimeoutError('unknown venue state'),
+            _confirmed_order(legs[0].ticker, side=TradeSide.SELL),
+        ]
+        with patch.object(
+            trader, 'place_order', AsyncMock(side_effect=replies)
+        ) as place:
+            result = await SpreadExecutor(trader).execute_spread(legs)
+        assert place.await_count == 3
+        assert not result.success and not result.hedged
+        assert not result.residual_exposures
+        assert result.execution_uncertain and result.requires_reconciliation
+        assert result.uncertain_leg_indices == [2]
+        assert 'TimeoutError' in result.failure_reason
+        assert result.leg_results[1].failure_reason == OrderFailureReason.UNKNOWN
+
+    async def test_unwind_exception_reports_uncertainty_and_known_residual(
+        self, setup_spread
+    ):
+        trader, legs = setup_spread
+        replies = [_confirmed_order(legs[0].ticker), _rejected_order(), TimeoutError()]
+        with patch.object(trader, 'place_order', AsyncMock(side_effect=replies)):
+            result = await SpreadExecutor(trader).execute_spread(legs)
+        assert not result.hedged and result.execution_uncertain
+        assert _residuals(result) == {'A': Decimal('10')}
+        assert result.unwind_results[0].execution_uncertain
+        assert 'TimeoutError' in result.unwind_results[0].failure_reason
+
+    async def test_overfill_is_not_success_and_unwinds_actual_quantity(
+        self, setup_spread
+    ):
+        trader, legs = setup_spread
+        replies = [
+            _confirmed_order(legs[0].ticker, '11'),
+            _confirmed_order(legs[0].ticker, '11', side=TradeSide.SELL),
+        ]
+        with patch.object(
+            trader, 'place_order', AsyncMock(side_effect=replies)
+        ) as place:
+            result = await SpreadExecutor(trader).execute_spread(legs)
+        assert not result.success and not result.all_filled
+        assert result.hedged and not result.execution_uncertain
+        assert place.await_args_list[1].kwargs['quantity'] == Decimal('11')
+
+    async def test_pending_zero_fill_is_not_a_known_rejection(self, setup_spread):
+        trader, legs = setup_spread
+        replies = [
+            _confirmed_order(
+                legs[0].ticker, '0', status=OrderStatus.PLACED, remaining='10'
+            )
+        ]
+        with patch.object(
+            trader, 'place_order', AsyncMock(side_effect=replies)
+        ) as place:
+            result = await SpreadExecutor(trader).execute_spread(legs)
+        assert place.await_count == 1
+        assert not result.success and not result.hedged
+        assert result.execution_uncertain and result.requires_reconciliation
+        assert not result.residual_exposures
+
+    async def test_mismatched_order_is_not_reversed_as_the_requested_ticker(
+        self, setup_spread
+    ):
+        trader, legs = setup_spread
+        with patch.object(
+            trader,
+            'place_order',
+            AsyncMock(return_value=_confirmed_order(legs[1].ticker)),
+        ) as place:
+            result = await SpreadExecutor(trader).execute_spread(legs)
+        assert place.await_count == 1
+        assert not result.success and not result.hedged and not result.all_filled
+        assert result.execution_uncertain and result.requires_reconciliation
+
+    @pytest.mark.parametrize('bad_quantity', ['0', '-1', 'NaN', 'Infinity'])
+    async def test_invalid_later_leg_is_rejected_before_any_order(
+        self, setup_spread, bad_quantity
+    ):
+        trader, legs = setup_spread
+        legs[1].quantity = Decimal(bad_quantity)
+        with patch.object(trader, 'place_order', AsyncMock()) as place:
+            result = await SpreadExecutor(trader).execute_spread(legs)
+        place.assert_not_awaited()
+        assert not result.success and not result.all_filled
+        assert not result.execution_uncertain and not result.requires_reconciliation
+
+    async def test_missing_unwind_quote_preserves_residual_without_submitting_fallback(
+        self, setup_spread
+    ):
+        trader, legs = setup_spread
+        replies = [_confirmed_order(legs[0].ticker), _rejected_order()]
+        with patch.object(
+            trader, 'place_order', AsyncMock(side_effect=replies)
+        ) as place:
+            with patch.object(trader.market_data, 'get_best_bid', return_value=None):
+                result = await SpreadExecutor(trader).execute_spread(legs)
+        assert place.await_count == 2
+        assert not result.hedged
+        assert _residuals(result) == {'A': Decimal('10')}
+        assert result.unwind_results[0].result is None
+        assert 'no valid executable quote' in result.unwind_results[0].failure_reason
+
+    async def test_malformed_order_status_returns_json_safe_uncertain_state(
+        self, setup_spread
+    ):
+        trader, legs = setup_spread
+        reply = _confirmed_order(legs[0].ticker)
+        reply.order.status = 'unexpected adapter value'
+        with patch.object(
+            trader, 'place_order', AsyncMock(return_value=reply)
+        ) as place:
+            result = await SpreadExecutor(trader).execute_spread(legs)
+        assert place.await_count == 1
+        assert not result.success and result.execution_uncertain
+        assert result.requires_reconciliation and not result.hedged
+        payload = json.loads(json.dumps(result.to_payload()))
+        assert payload['leg_results'][0]['failure_reason'] == 'unknown'

@@ -7,6 +7,9 @@ ConditionalArbStrategy, EventSumArbStrategy, StructuralArbStrategy.
 from __future__ import annotations
 
 from decimal import Decimal
+from unittest.mock import AsyncMock
+
+import pytest
 
 from oracle3.data.market_data_manager import MarketDataManager
 from oracle3.events.events import NewsEvent, PriceChangeEvent
@@ -28,6 +31,7 @@ from oracle3.strategy.contrib.structural_arb_strategy import (
 )
 from oracle3.ticker.ticker import CashTicker, PolyMarketTicker
 from oracle3.trader.paper_trader import PaperTrader
+from oracle3.trader.types import Order, OrderStatus, PlaceOrderResult, TradeSide
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -608,76 +612,266 @@ class TestEventSumArbRegistration:
         assert len(s._tickers) == 0
 
 
+def _event_sum_strategy(tickers, **kwargs):
+    return EventSumArbStrategy(
+        event_id='evt1',
+        outcome_market_ids=[ticker.market_id for ticker in tickers],
+        yes_token_ids={ticker.market_id: ticker.token_id for ticker in tickers},
+        outcomes_are_exhaustive=True,
+        outcomes_are_mutually_exclusive=True,
+        cooldown_seconds=0.0,
+        trade_size=5.0,
+        **kwargs,
+    )
+
+
+def _event_outcomes(count=2):
+    return [
+        _make_ticker(f'T{i}', market_id=f'm{i}', event_id='evt1', no_token_id=f'N{i}')
+        for i in range(1, count + 1)
+    ]
+
+
 class TestEventSumArbDetection:
-    async def test_overpriced_sum_triggers_buy_no(self):
-        """sum_yes > 1 + fees + min_edge => BUY_NO."""
-        t1 = PolyMarketTicker(
-            symbol='T1', name='O1', token_id='t1',
-            market_id='m1', event_id='evt1', no_token_id='T1_NO',
-        )
-        t2 = PolyMarketTicker(
-            symbol='T2', name='O2', token_id='t2',
-            market_id='m2', event_id='evt1', no_token_id='T2_NO',
-        )
-        s = EventSumArbStrategy(
-            event_id='evt1', min_edge=0.01, fee_rate=0.0,
-            cooldown_seconds=0.0, trade_size=5.0,
+    async def test_default_never_infers_complete_partition(self):
+        tickers = _event_outcomes()
+        strategy = EventSumArbStrategy(event_id='evt1', cooldown_seconds=0)
+        trader = _make_trader()
+        for ticker in tickers:
+            _seed_order_book(trader, ticker, Decimal('0.19'), Decimal('0.20'))
+            await strategy.process_event(_price_event(ticker, Decimal('0.20')), trader)
+        assert trader.orders == []
+        assert strategy.get_decisions() == []
+
+    async def test_incomplete_two_of_three_does_not_trade(self):
+        tickers = _event_outcomes(3)
+        strategy = _event_sum_strategy(tickers, fee_rate=0)
+        trader = _make_trader()
+        for ticker, price in zip(tickers[:2], [Decimal('0.20'), Decimal('0.30')]):
+            _seed_order_book(trader, ticker, price - Decimal('0.01'), price)
+            await strategy.process_event(_price_event(ticker, price), trader)
+        assert trader.orders == []
+        # The final outcome makes the full basket fairly priced, not an arb.
+        _seed_order_book(trader, tickers[2], Decimal('0.49'), Decimal('0.50'))
+        await strategy.process_event(_price_event(tickers[2], Decimal('0.50')), trader)
+        assert trader.orders == []
+        assert strategy.get_decisions()[-1].action == 'HOLD'
+
+    async def test_complete_underpriced_partition_buys_all_yes_at_asks(self):
+        tickers = _event_outcomes(3)
+        strategy = _event_sum_strategy(tickers, fee_rate=0)
+        trader = _make_trader()
+        for ticker, ask in zip(
+            tickers, [Decimal('0.20'), Decimal('0.30'), Decimal('0.40')]
+        ):
+            _seed_order_book(trader, ticker, ask - Decimal('0.10'), ask)
+            await strategy.process_event(
+                _price_event(ticker, ask - Decimal('0.05')), trader
+            )
+        assert len(trader.orders) == 3
+        assert [order.limit_price for order in trader.orders] == [
+            Decimal('0.20'),
+            Decimal('0.30'),
+            Decimal('0.40'),
+        ]
+        assert all(order.filled_quantity == Decimal('5') for order in trader.orders)
+        assert strategy.get_decisions()[-1].action == 'BUY_YES'
+
+    async def test_actual_no_asks_determine_buy_no_prices(self):
+        tickers = _event_outcomes()
+        strategy = _event_sum_strategy(tickers, fee_rate=0)
+        trader = _make_trader()
+        for ticker in tickers:
+            _seed_order_book(trader, ticker, Decimal('0.55'), Decimal('0.75'))
+            _seed_order_book(
+                trader, ticker.get_no_ticker(), Decimal('0.25'), Decimal('0.44')
+            )
+            await strategy.process_event(_price_event(ticker, Decimal('0.70')), trader)
+        assert len(trader.orders) == 2
+        assert all(order.ticker.token_id.startswith('N') for order in trader.orders)
+        assert all(order.limit_price == Decimal('0.44') for order in trader.orders)
+        assert strategy.get_decisions()[-1].action == 'BUY_NO'
+
+    async def test_wide_yes_spread_does_not_create_phantom_no_edge(self):
+        tickers = _event_outcomes()
+        strategy = _event_sum_strategy(tickers, fee_rate=0)
+        trader = _make_trader()
+        for ticker in tickers:
+            # 1 - ask would fabricate a .20 NO buy; 1 - bid is .60.
+            _seed_order_book(trader, ticker, Decimal('0.40'), Decimal('0.80'))
+            await strategy.process_event(_price_event(ticker, Decimal('0.80')), trader)
+        assert trader.orders == []
+        assert strategy.get_decisions()[-1].signal_values[
+            'edge_buy_no'
+        ] == pytest.approx(-0.20)
+
+    async def test_known_no_book_overrides_attractive_yes_complement(self):
+        tickers = _event_outcomes()
+        strategy = _event_sum_strategy(tickers, fee_rate=0)
+        trader = _make_trader()
+        for ticker in tickers:
+            _seed_order_book(trader, ticker, Decimal('0.70'), Decimal('0.80'))
+            _seed_order_book(
+                trader, ticker.get_no_ticker(), Decimal('0.20'), Decimal('0.60')
+            )
+            await strategy.process_event(_price_event(ticker, Decimal('0.75')), trader)
+        assert trader.orders == []
+        assert strategy.get_decisions()[-1].signal_values[
+            'edge_buy_no'
+        ] == pytest.approx(-0.20)
+
+    async def test_empty_no_book_blocks_complement_fallback(self):
+        tickers = _event_outcomes()
+        strategy = _event_sum_strategy(tickers, fee_rate=0)
+        trader = _make_trader()
+        for ticker in tickers:
+            _seed_order_book(trader, ticker, Decimal('0.70'), Decimal('0.80'))
+            trader.market_data.update_order_book(ticker.get_no_ticker(), OrderBook())
+            await strategy.process_event(_price_event(ticker, Decimal('0.75')), trader)
+        assert trader.orders == []
+        assert strategy.get_decisions()[-1].signal_values.get('edge_buy_no') is None
+
+    async def test_missing_no_token_prevents_partial_no_basket(self):
+        tickers = _event_outcomes()
+        tickers[1] = _make_ticker('T2', market_id='m2', event_id='evt1')
+        strategy = _event_sum_strategy(tickers, fee_rate=0)
+        trader = _make_trader()
+        for ticker in tickers:
+            _seed_order_book(trader, ticker, Decimal('0.70'), Decimal('0.80'))
+            await strategy.process_event(_price_event(ticker, Decimal('0.75')), trader)
+        assert trader.orders == []
+        assert strategy.get_decisions()[-1].signal_values.get('edge_buy_no') is None
+
+    async def test_no_first_update_cannot_register_as_yes(self):
+        tickers = _event_outcomes()
+        strategy = _event_sum_strategy(tickers, fee_rate=0)
+        trader = _make_trader()
+        for ticker in tickers:
+            no_ticker = ticker.get_no_ticker()
+            _seed_order_book(trader, no_ticker, Decimal('0.10'), Decimal('0.20'))
+            await strategy.process_event(
+                _price_event(no_ticker, Decimal('0.20')), trader
+            )
+        assert strategy._tickers == {}
+        assert trader.orders == []
+
+    async def test_missing_book_cannot_be_replaced_by_last_trade_price(self):
+        tickers = _event_outcomes()
+        strategy = _event_sum_strategy(tickers, fee_rate=0)
+        trader = _make_trader()
+        for ticker in tickers:
+            await strategy.process_event(_price_event(ticker, Decimal('0.20')), trader)
+        assert trader.orders == []
+
+    async def test_unexpected_outcome_invalidates_declared_partition(self):
+        tickers = _event_outcomes(3)
+        strategy = _event_sum_strategy(tickers[:2], fee_rate=0)
+        trader = _make_trader()
+        await strategy.process_event(_price_event(tickers[2], Decimal('0.20')), trader)
+        for ticker in tickers[:2]:
+            _seed_order_book(trader, ticker, Decimal('0.10'), Decimal('0.20'))
+            await strategy.process_event(_price_event(ticker, Decimal('0.20')), trader)
+        assert trader.orders == []
+
+    async def test_published_default_fees_remove_thin_gross_edge(self):
+        tickers = _event_outcomes()
+        strategy = _event_sum_strategy(tickers, min_edge=0.01)
+        trader = _make_trader()
+        for ticker in tickers:
+            _seed_order_book(trader, ticker, Decimal('0.48'), Decimal('0.49'))
+            await strategy.process_event(_price_event(ticker, Decimal('0.48')), trader)
+        assert trader.orders == []
+        assert strategy.get_decisions()[-1].signal_values['edge_buy_yes'] < 0
+
+    async def test_explicit_market_fee_schedule_is_used(self):
+        tickers = _event_outcomes()
+        strategy = _event_sum_strategy(
+            tickers, min_edge=0.01, market_fee_rates={'m1': 0, 'm2': 0}
         )
         trader = _make_trader()
+        for ticker in tickers:
+            _seed_order_book(trader, ticker, Decimal('0.48'), Decimal('0.49'))
+            await strategy.process_event(_price_event(ticker, Decimal('0.48')), trader)
+        assert len(trader.orders) == 2
 
-        # Seed books for YES and NO
-        for t in [t1, t2]:
-            _seed_order_book(trader, t, Decimal('0.55'), Decimal('0.65'))
-        for t in [t1.get_no_ticker(), t2.get_no_ticker()]:
-            _seed_order_book(trader, t, Decimal('0.35'), Decimal('0.45'))
+    async def test_shallow_leg_prevents_entire_basket(self):
+        tickers = _event_outcomes()
+        strategy = _event_sum_strategy(tickers, fee_rate=0)
+        trader = _make_trader()
+        for ticker in tickers:
+            _seed_order_book(
+                trader, ticker, Decimal('0.10'), Decimal('0.20'), size=Decimal('1')
+            )
+            await strategy.process_event(_price_event(ticker, Decimal('0.20')), trader)
+        assert trader.orders == []
 
-        # Simulate OrderBookEvent or PriceChangeEvent
-        await s.process_event(_price_event(t1, Decimal('0.60')), trader)
-        await s.process_event(_price_event(t2, Decimal('0.55')), trader)
-
-        decisions = s.get_decisions()
-        trade_decisions = [d for d in decisions if d.action != 'HOLD']
-        # Should have tried to trade
-        assert len(trade_decisions) >= 1
-
-    async def test_underpriced_sum_holds_or_buys_yes(self):
-        """sum_yes < 1 by enough => BUY_YES (or hold if edge too small)."""
-        t1 = PolyMarketTicker(
-            symbol='T1', name='O1', token_id='t1',
-            market_id='m1', event_id='evt1',
+    @pytest.mark.parametrize('invalid_fill', [
+        'pending_full', 'overfill', 'remaining', 'wrong_side', 'wrong_ticker',
+    ])
+    async def test_invalid_first_leg_result_stops_basket(self, invalid_fill):
+        tickers = _event_outcomes()
+        strategy = _event_sum_strategy(tickers, fee_rate=0)
+        trader = _make_trader()
+        first_order = Order(
+            status=OrderStatus.PLACED if invalid_fill == 'pending_full' else OrderStatus.FILLED,
+            ticker=tickers[1] if invalid_fill == 'wrong_ticker' else tickers[0],
+            side=TradeSide.SELL if invalid_fill == 'wrong_side' else TradeSide.BUY,
+            limit_price=Decimal('0.20'),
+            filled_quantity=Decimal('6') if invalid_fill == 'overfill' else Decimal('5'),
+            average_price=Decimal('0.20'),
+            trades=[],
+            remaining=Decimal('1') if invalid_fill == 'remaining' else Decimal('0'),
+            commission=Decimal('0'),
         )
-        t2 = PolyMarketTicker(
-            symbol='T2', name='O2', token_id='t2',
-            market_id='m2', event_id='evt1',
-        )
-        s = EventSumArbStrategy(
-            event_id='evt1', min_edge=0.01, fee_rate=0.0,
-            cooldown_seconds=0.0, trade_size=5.0,
+        place_order = AsyncMock(return_value=PlaceOrderResult(order=first_order))
+        trader.place_order = place_order
+        for ticker in tickers:
+            _seed_order_book(trader, ticker, Decimal('0.10'), Decimal('0.20'))
+            await strategy.process_event(_price_event(ticker, Decimal('0.20')), trader)
+        place_order.assert_awaited_once()
+        assert strategy.get_decisions()[-1].signal_values['failed_legs'] == 1
+
+    @pytest.mark.parametrize('cooldown', [-1, float('nan'), float('inf')])
+    def test_invalid_cooldown_is_rejected(self, cooldown):
+        with pytest.raises(ValueError, match='cooldown_seconds'):
+            EventSumArbStrategy(cooldown_seconds=cooldown)
+
+    @pytest.mark.parametrize('config', [
+        {'event_id': ' evt1 '},
+        {'outcome_market_ids': ['m1 ', 'm2']},
+        {'outcome_market_ids': ['m1', 'm2'], 'yes_token_ids': {'m1': 'T1 ', 'm2': 'T2'}},
+    ])
+    def test_surrounding_identifier_whitespace_is_rejected(self, config):
+        with pytest.raises(ValueError):
+            EventSumArbStrategy(**config)
+
+    @pytest.mark.parametrize('ids', [['m1', 'm1'], ['m1', ''], 'm1'])
+    def test_invalid_outcome_list_is_rejected(self, ids):
+        with pytest.raises(ValueError):
+            EventSumArbStrategy(outcome_market_ids=ids)
+
+    def test_duplicate_yes_token_is_rejected(self):
+        with pytest.raises(ValueError, match='distinct YES token'):
+            EventSumArbStrategy(
+                outcome_market_ids=['m1', 'm2'],
+                yes_token_ids={'m1': 'same', 'm2': 'same'},
+            )
+
+    @pytest.mark.parametrize('exhaustive,exclusive', [(False, True), (True, False)])
+    async def test_both_partition_assertions_are_required(self, exhaustive, exclusive):
+        tickers = _event_outcomes()
+        strategy = EventSumArbStrategy(
+            event_id='evt1',
+            outcome_market_ids=['m1', 'm2'],
+            yes_token_ids={'m1': 'T1', 'm2': 'T2'},
+            outcomes_are_exhaustive=exhaustive,
+            outcomes_are_mutually_exclusive=exclusive,
         )
         trader = _make_trader()
-        _seed_order_book(trader, t1, Decimal('0.15'), Decimal('0.25'))
-        _seed_order_book(trader, t2, Decimal('0.25'), Decimal('0.35'))
-
-        # sum = 0.20 + 0.30 = 0.50, edge_buy_yes = 1 - 0.50 = 0.50
-        await s.process_event(_price_event(t1, Decimal('0.20')), trader)
-        await s.process_event(_price_event(t2, Decimal('0.30')), trader)
-
-        decisions = s.get_decisions()
-        trade_decisions = [d for d in decisions if d.action != 'HOLD']
-        assert len(trade_decisions) >= 1
-
-    async def test_min_markets_not_met(self):
-        """If fewer markets than min_markets, no trade."""
-        t1 = PolyMarketTicker(
-            symbol='T1', name='O1', token_id='t1',
-            market_id='m1', event_id='evt1',
-        )
-        s = EventSumArbStrategy(
-            event_id='evt1', min_markets=3,
-        )
-        trader = _make_trader([t1])
-        await s.process_event(_price_event(t1, Decimal('0.80')), trader)
-        assert len(s.get_decisions()) == 0
+        for ticker in tickers:
+            _seed_order_book(trader, ticker, Decimal('0.10'), Decimal('0.20'))
+            await strategy.process_event(_price_event(ticker, Decimal('0.20')), trader)
+        assert trader.orders == []
 
 
 # ===================================================================

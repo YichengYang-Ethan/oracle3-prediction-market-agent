@@ -176,13 +176,88 @@ def test_input_validation():
         )
 
 
+@pytest.mark.parametrize('contracts', [float('nan'), float('inf'), -float('inf')])
+def test_nonfinite_size_rejected_even_without_prices(contracts):
+    with pytest.raises(ValueError, match='contracts must be finite and positive'):
+        check_constraint('implication', [q('A'), q('B')], contracts=contracts)
+
+
+@pytest.mark.parametrize('field', ['yes_bid', 'yes_ask', 'no_bid', 'no_ask'])
+@pytest.mark.parametrize(
+    'price', [float('nan'), float('inf'), -float('inf'), -0.01, 1.01]
+)
+def test_invalid_price_cannot_hide_behind_a_missing_leg(field, price):
+    with pytest.raises(ValueError, match=f'{field} must be finite and between 0 and 1'):
+        check_constraint('implication', [q('A'), q('B', **{field: price})])
+
+
+def test_invalid_unused_price_rejected_even_when_basket_can_be_priced():
+    with pytest.raises(ValueError, match='yes_ask must be finite'):
+        check_constraint(
+            'implication',
+            [q('A', no_ask=0.4, yes_ask=float('nan')), q('B', yes_ask=0.55)],
+        )
+
+
+def test_unused_boundary_quotes_remain_valid():
+    result = check_constraint(
+        'implication',
+        [q('A', no_ask=0.4, yes_bid=0, no_bid=1), q('B', yes_ask=0.55, no_ask=1)],
+    )
+    assert result.best.net_edge == pytest.approx(0.05)
+
+
+@pytest.mark.parametrize(
+    'relation', ['implication', 'complement', 'same_event', 'exclusivity', 'event_sum']
+)
+def test_contract_cannot_be_counted_twice(relation):
+    with pytest.raises(ValueError, match='duplicate contract: kalshi:A'):
+        check_constraint(relation, [q('A', yes_ask=0.3), q('A', yes_ask=0.3)])
+
+
+def test_whitespace_and_venue_case_do_not_hide_duplicate_contracts():
+    with pytest.raises(ValueError, match='duplicate contract: kalshi:A'):
+        check_constraint('event_sum', [q('A'), q(' A ', venue=' Kalshi ')])
+
+
+@pytest.mark.parametrize('field', ['market_id', 'venue'])
+@pytest.mark.parametrize('value', ['', '  ', None])
+def test_blank_contract_identity_rejected_without_prices(field, value):
+    kwargs = {'market_id': 'A', 'venue': 'kalshi', field: value}
+    with pytest.raises(ValueError, match=f'{field} must be a nonblank string'):
+        check_constraint('event_sum', [q(**kwargs), q('B')])
+
+
+def test_same_identifier_on_distinct_venues_is_not_a_duplicate():
+    result = check_constraint(
+        'same_event',
+        [q('A', yes_ask=0.4), q('A', no_ask=0.55, venue='polymarket')],
+    )
+    assert result.best.net_edge == pytest.approx(0.05)
+    assert {leg.venue for leg in result.best.legs} == {'kalshi', 'polymarket'}
+
+
+@pytest.mark.parametrize('has_prices', [False, True])
+def test_assessment_never_certifies_relation_or_execution(has_prices):
+    quotes = (
+        [q('A', yes_bid=0.6), q('B', yes_ask=0.55)] if has_prices else [q('A'), q('B')]
+    )
+    payload = check_constraint('implication', quotes).to_dict()
+    assert payload['assessment'] == {
+        'relation_verified': False,
+        'execution_verified': False,
+        'conditional_on_relation': True,
+    }
+    assert payload['assumptions']
+
+
 def test_to_dict_is_json_ready():
     import json
 
     result = check_constraint(
         'implication', [q('A', yes_bid=0.60), q('B', yes_ask=0.55)]
     )
-    payload = json.loads(json.dumps(result.to_dict()))
+    payload = json.loads(json.dumps(result.to_dict(), allow_nan=False))
     assert payload['constraint'] == 'P(A) <= P(B)'
     assert payload['best']['net_edge_per_contract'] == pytest.approx(0.05)
     assert payload['assumptions']
