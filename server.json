@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.YichengYang-Ethan/oracle3",
-  "title": "Oracle3 prediction-market arbitrage checks",
+  "title": "Oracle3 prediction-market agent tools",
   "description": "Kalshi and Polymarket data, venue fees, no-arbitrage checks and paper execution for AI agents.",
   "repository": {
     "url": "https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent",

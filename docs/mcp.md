@@ -4,20 +4,30 @@ Oracle3 ships a [Model Context Protocol](https://modelcontextprotocol.io) server
 
 ## Run it
 
+For a released package, use the dedicated server entry point:
+
 ```bash
 pip install oracle3
-oracle3 mcp                              # stdio, for desktop and IDE clients
-oracle3 mcp --transport streamable-http  # HTTP
+oracle3-mcp                              # stdio, for desktop and IDE clients
 ```
 
-`oracle3-mcp` is an equivalent entry point.
+Run this as a client-managed subprocess; stdio waits for MCP protocol input.
+`oracle3 mcp` is an equivalent CLI entry point; it also accepts
+`--transport streamable-http` for HTTP. Use a virtual environment for pip
+installs and configure the absolute path to its server executable.
+
+This page describes current `main`. The explicit `assessment` fields and
+new execution contracts were added after release 1.2.2. For those behaviors,
+follow the source installation in the [agent quickstart](agent-quickstart.md).
+The quickstart also provides an offline first call with exact arguments and
+expected output.
 
 ## Configure a client
 
 Claude Code:
 
 ```bash
-claude mcp add oracle3 -- uvx oracle3 mcp
+claude mcp add oracle3 -- uvx --from oracle3 oracle3-mcp
 ```
 
 Claude Desktop, Cursor and other clients that read an `mcpServers` block:
@@ -25,7 +35,7 @@ Claude Desktop, Cursor and other clients that read an `mcpServers` block:
 ```json
 {
   "mcpServers": {
-    "oracle3": { "command": "uvx", "args": ["oracle3", "mcp"] }
+    "oracle3": { "command": "uvx", "args": ["--from", "oracle3", "oracle3-mcp"] }
   }
 }
 ```
@@ -37,7 +47,7 @@ The server is listed in the MCP Registry as `io.github.YichengYang-Ethan/oracle3
 | Tool | Arguments | Returns | Side effects |
 |---|---|---|---|
 | `search_markets` | `venue`, `query`, `limit`, `series_ticker` | Open markets with best prices | read-only |
-| `get_market` | `venue`, `market_id` | Prices, volume, close time, resolution rules | read-only |
+| `get_market` | `venue`, `market_id` | Prices, volume, close time; Kalshi rule fields | read-only |
 | `get_orderbook` | `venue`, `market_id`, `depth` | YES and NO bids and asks, best first | read-only |
 | `get_quote` | `venue`, `market_id` | Best bid and ask on both sides, the market's fee schedule | read-only |
 | `check_constraint_live` | `relation`, `markets`, `contracts`, `maker` | Every basket's cost, fees and edge, with live quotes | read-only |
@@ -52,6 +62,12 @@ The server is listed in the MCP Registry as `io.github.YichengYang-Ethan/oracle3
 
 Prices are dollars per contract. On Kalshi, `market_id` is the ticker; on Polymarket it is the Gamma market id, "yes" is the first outcome token and "no" the second. The paper ledger lives at `~/.oracle3/mcp_paper_ledger.json` unless `ORACLE3_MCP_LEDGER` points elsewhere.
 
+The current Polymarket normalizer does not return full resolution text. Obtain
+missing rules from the venue's market page and verify the outcome mapping
+before assuming a relationship. The MCP paper ledger is separate from the
+trading engine's paper state. Use your client's `tools/list` response for the
+installed server's complete JSON input schemas; older releases may differ.
+
 ## Relations
 
 | Relation | Bound | Markets, in order | Basket |
@@ -60,9 +76,24 @@ Prices are dollars per contract. On Kalshi, `market_id` is the ticker; on Polyma
 | `exclusivity` | probabilities sum to at most 1 | every outcome | NO on every outcome, pays at least n − 1 |
 | `complement` | P(A) + P(B) = 1 | A, B | YES + YES or NO + NO, pays 1 |
 | `same_event` | P(A) = P(B), one event on two venues | A, B | YES on one + NO on the other, pays 1 |
-| `event_sum` | probabilities sum to 1 | every outcome | YES on all (pays 1) or NO on all (pays n − 1) |
+| `event_sum` | probabilities sum to 1 for mutually exclusive, exhaustive outcomes | every outcome | YES on all (pays 1) or NO on all (pays n − 1) |
 
-Whether a relation holds is a judgment about the contracts' wording and resolution rules. Read both markets with `get_market` before relying on a result.
+Whether a relation holds is a judgment about the contracts' wording and resolution rules. Read both markets with `get_market` and obtain any missing rules before relying on a result.
+
+Both check tools return `best` (or `null` when no candidate can be priced),
+`missing_quotes`, `assumptions` and, on current main, `assessment`:
+
+```json
+{
+  "relation_verified": false,
+  "execution_verified": false,
+  "conditional_on_relation": true
+}
+```
+
+`profitable_after_fees` describes conditional arithmetic. The tools do not verify
+settlement equivalence, order-book depth or full fills. `check_constraint_live`
+fetches current quotes and fee terms but retains the same assessment boundary.
 
 ## Fees
 
@@ -78,7 +109,7 @@ The derivation of what these fees mean for arbitrage is in [Do prediction-market
 Ask an agent: *"Is the Fed-hold contract on Kalshi priced consistently with the same contract on Polymarket after fees?"* A typical tool sequence:
 
 1. `search_markets(venue="kalshi", series_ticker="KXFEDDECISION")` and `search_markets(venue="polymarket", query="fed decision")`
-2. `get_market` on the two candidates to compare their resolution rules
+2. `get_market` on the two candidates, plus the Polymarket market page for missing resolution text; compare their settlement rules and outcome mappings
 3. `check_constraint_live(relation="same_event", markets=[{"venue": "kalshi", "market_id": "<ticker>"}, {"venue": "polymarket", "market_id": "<id>"}])`
 
 The result lists both baskets (YES on Kalshi + NO on Polymarket, and the reverse) with the fee on each leg and the edge left after fees.

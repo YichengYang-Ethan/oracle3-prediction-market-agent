@@ -1,35 +1,39 @@
 # Oracle3
 
-> Open-source trading engine and MCP server for prediction markets. It finds prices of related event contracts that violate probability bounds after each venue's published fees and trades them live on Kalshi, Polymarket and Solana, or on paper, under pre-trade risk limits. The MCP server gives AI agents market data, fee-aware checks and paper execution; live orders run through the CLI.
+> Prediction-market research and execution tools with a Python API, JSON CLI, MCP server, and Agent Skills. MCP exposes public Kalshi/Polymarket data, fee-aware checks of supplied contract relations, and a local paper ledger. Live trading is a separate CLI capability.
 
-Install with `pip install oracle3`. Run the MCP server with `uvx oracle3 mcp` (13 tools: market search, quotes, order books, fee-aware constraint checks, a local paper ledger). Python API: `oracle3.arbitrage.check_constraint` and `oracle3.fees`.
+## Start here
 
-## Docs
+- [Agent quickstart](https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/agent-quickstart/): client setup, deterministic first tool call, result interpretation, live research, and skill setup
+- [MCP reference](https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/mcp/): tool names, inputs, transports, and side effects
+- [Agent contract regression](https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/agent-harness/): frozen tool/executor cases, JSON evidence, and migration notes; does not evaluate LLM or Skill efficacy
+- [Documentation home](https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/): capabilities, examples, and current development scope
 
-- [Documentation home](https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/): overview and quick start
-- [MCP server](https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/mcp/): tools, client configuration, examples
-- [Do prediction-market arbitrage edges survive fees?](https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/research/fee-frontier/): break-even violations under Kalshi and Polymarket fees
-- [CLI quick start](https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/CLI_QUICK_START/)
+## Task and capability contracts
 
-## Extensions
+- Find candidates with `search_markets`; inspect `get_market`, `get_quote`, and `get_orderbook`. MCP venues are `kalshi` and `polymarket`. Prices are dollars per contract; sizes are contracts. Kalshi market IDs are tickers; Polymarket IDs are Gamma market IDs, not token IDs.
+- Use `check_constraint` for supplied quotes without network access; use `check_constraint_live` for public live quotes and venue fee schedules. Relation labels are `implication`, `exclusivity`, `complement`, `same_event`, and `event_sum`.
+- A result is conditional on the caller's relation and full fills at the quoted prices. The checker does not verify settlement rules or executable depth. On current main, `assessment` explicitly marks relation and execution as unverified. A positive gross violation can have a negative edge after fees.
+- `get_market` returns Kalshi rule text. Its current Polymarket response includes outcome metadata but omits full resolution text; obtain missing rules from the venue before treating markets as equivalent.
+- `paper_order` buys against a live-book snapshot and writes a local ledger. `paper_portfolio` reads it; `paper_reset(confirm=true)` erases its positions/history. The ledger carries positions at cost and does not track resolution or P&L. No MCP tool places real orders.
+- `fair_value` returns a probability implied by a chosen Wang-transform parameter, not independently verified event truth. Recorded or fitted relations also require interpretation.
 
-- [oracle3-extras](https://github.com/YichengYang-Ethan/oracle3-extras): companion package, like pymc-extras for PyMC. Kairos cross-venue pairs (Kalshi, Polymarket, Predict.fun, Hyperliquid) as Oracle3 relations, live no-arbitrage scans sized against the order books, and Polymarket execution through MetaMask Agent Wallet. New integrations start there.
+## Install and source
 
-## Source
+`pip install oracle3` and `uvx --from oracle3 oracle3-mcp` use the published package, which can lag main. The new assessment fields and regression runner are documented for a main checkout; follow the agent quickstart to install that checkout and configure its absolute `oracle3-mcp` executable. Package installation alone does not install skills into a client.
 
 - [Repository](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent)
 - [README](https://raw.githubusercontent.com/YichengYang-Ethan/oracle3-prediction-market-agent/main/README.md)
 - [AGENTS.md](https://raw.githubusercontent.com/YichengYang-Ethan/oracle3-prediction-market-agent/main/AGENTS.md): setup, checks and safety rules for coding agents
-- [Agent skills](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/tree/main/skills)
-- [server.json](https://raw.githubusercontent.com/YichengYang-Ethan/oracle3-prediction-market-agent/main/server.json): MCP Registry manifest
+- [Agent Skills](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/tree/main/skills): six workflows; setup is documented in the agent quickstart
+- [Registry manifest](https://raw.githubusercontent.com/YichengYang-Ethan/oracle3-prediction-market-agent/main/server.json): package installation metadata
 - [PyPI package](https://pypi.org/project/oracle3/)
+- [CLI quickstart](https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/CLI_QUICK_START/)
 
-## Research
+## Research and extensions
 
-- [Pricing Prediction Markets: Incomplete Markets, Selection Rules, and Calibration Wedges](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6468338): the working paper behind the fair-value engine
-- [Replication package](https://github.com/YichengYang-Ethan/prediction-market-pricing)
-
-## Optional
-
+- [Fee frontier](https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/research/fee-frontier/): calculations under stated schedules, not an observed trading return
+- [Pricing working paper](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6468338) and [replication package](https://github.com/YichengYang-Ethan/prediction-market-pricing): model assumptions and estimates
+- [oracle3-extras](https://github.com/YichengYang-Ethan/oracle3-extras): experimental venue, data, and wallet integrations; its venue coverage does not imply equivalent MCP support in core Oracle3
 - [Open problems](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/issues?q=is%3Aissue+label%3Aopen-problem)
 - [Discussions](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/discussions)
