@@ -1,20 +1,61 @@
 """Main CLI entry point for Oracle3."""
 
+from importlib import import_module
 from typing import Any
 
 import click
 
 from oracle3 import __version__
-from oracle3.cli.agent_commands import backtest, live, paper, strategy
-from oracle3.cli.data_commands import data
-from oracle3.cli.market_commands import market
-from oracle3.cli.monitor import monitor
-from oracle3.cli.news_commands import news
-from oracle3.cli.research_commands import research
-from oracle3.cli.trade_commands import trade
+
+# Keep discovery and MCP startup independent of authenticated traders, wallet
+# SDKs and strategy providers. Import a command module only when it is selected.
+_LAZY_COMMANDS = {
+    'backtest': ('oracle3.cli.agent_commands', 'Run a strategy on historical data.'),
+    'data': ('oracle3.cli.data_commands', 'Record and inspect market data.'),
+    'live': ('oracle3.cli.agent_commands', 'Run live trading with explicit approval.'),
+    'market': ('oracle3.cli.market_commands', 'Query public market data.'),
+    'monitor': ('oracle3.cli.monitor', 'Monitor the trading engine.'),
+    'news': ('oracle3.cli.news_commands', 'Fetch market news.'),
+    'paper': ('oracle3.cli.agent_commands', 'Run a paper-trading strategy.'),
+    'research': (
+        'oracle3.cli.research_commands',
+        'Inspect and evaluate market relations.',
+    ),
+    'strategy': ('oracle3.cli.agent_commands', 'Create and validate strategies.'),
+    'trade': ('oracle3.cli.trade_commands', 'Inspect and control a running engine.'),
+}
 
 
-@click.group()
+class _LazyGroup(click.Group):
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        return sorted(set(super().list_commands(ctx)) | set(_LAZY_COMMANDS))
+
+    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
+        command = super().get_command(ctx, cmd_name)
+        if command is None and cmd_name in _LAZY_COMMANDS:
+            module, _ = _LAZY_COMMANDS[cmd_name]
+            command = getattr(import_module(module), cmd_name)
+            self.add_command(command, cmd_name)
+        return command
+
+    def format_commands(
+        self, ctx: click.Context, formatter: click.HelpFormatter
+    ) -> None:
+        # Click's default formatter resolves every command, defeating lazy imports.
+        rows = []
+        for name in self.list_commands(ctx):
+            command = self.commands.get(name)
+            if command is not None:
+                if not command.hidden:
+                    rows.append((name, command.get_short_help_str()))
+            else:
+                rows.append((name, _LAZY_COMMANDS[name][1]))
+        if rows:
+            with formatter.section('Commands'):
+                formatter.write_dl(rows)
+
+
+@click.group(cls=_LazyGroup)
 @click.version_option(version=__version__)
 def cli() -> None:
     """Oracle3 - paper-trading engine for prediction markets on Kalshi, Polymarket, and Solana."""
@@ -65,7 +106,12 @@ def blinks(host: str, port: int) -> None:
 @click.option(
     '--max-events', default=None, type=int, help='Limit events for episode replay.'
 )
-@click.option('--snapshot-json', default=None, type=str, help='Write periodic JSON state snapshot to PATH')
+@click.option(
+    '--snapshot-json',
+    default=None,
+    type=str,
+    help='Write periodic JSON state snapshot to PATH',
+)
 @click.option(
     '--snapshot-interval',
     default=5,
@@ -323,7 +369,9 @@ def dashboard(  # noqa: C901
         try:
             await ctrl.start()
         except AttributeError:
-            click.echo('  [–] Control server skipped (Windows — no Unix socket support)')
+            click.echo(
+                '  [–] Control server skipped (Windows — no Unix socket support)'
+            )
 
         if coordinator is not None:
             await coordinator.start()
@@ -352,11 +400,15 @@ def dashboard(  # noqa: C901
 
                     # Cash balance
                     cash_positions = position_manager.get_cash_positions()
-                    cash = cash_positions[0].quantity if cash_positions else Decimal('0')
+                    cash = (
+                        cash_positions[0].quantity if cash_positions else Decimal('0')
+                    )
 
                     # Last prices (mid-price from order books, YES-side only)
                     last_prices: dict[str, Decimal] = {}
-                    for ticker in sorted(market_data.order_books, key=lambda t: t.symbol):
+                    for ticker in sorted(
+                        market_data.order_books, key=lambda t: t.symbol
+                    ):
                         if isinstance(ticker, CashTicker):
                             continue
                         if getattr(ticker, 'is_no_side', False):
@@ -387,7 +439,9 @@ def dashboard(  # noqa: C901
                     os.replace(tmp_path, snapshot_json)
 
             snapshot_task = asyncio.create_task(_write_snapshot())
-            click.echo(f'  [✓] JSON snapshots every {snapshot_interval}s → {snapshot_json}')
+            click.echo(
+                f'  [✓] JSON snapshots every {snapshot_interval}s → {snapshot_json}'
+            )
 
         mode_label = 'Solana Backtest' if is_backtest else 'Paper Trading'
         click.echo(f'{mode_label} Dashboard running at http://localhost:{port}')
@@ -734,18 +788,6 @@ def reputation(
     click.echo(f'  Sharpe:      {rep.get("sharpe", 0):.4f}')
     click.echo(f'  Total Trades: {rep.get("total_trades", 0)}')
     click.echo(f'  Consistency: {rep.get("consistency", 0):.4f}')
-
-
-cli.add_command(monitor)
-cli.add_command(trade)
-cli.add_command(strategy)
-cli.add_command(backtest)
-cli.add_command(paper)
-cli.add_command(live)
-cli.add_command(news)
-cli.add_command(market)
-cli.add_command(data)
-cli.add_command(research)
 
 
 @cli.command('mcp')

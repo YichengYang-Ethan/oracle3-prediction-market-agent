@@ -1,9 +1,8 @@
-"""Atomic multi-leg spread execution layer.
+"""Sequential spread execution with verified, best-effort recovery.
 
-Provides ``SpreadExecutor`` that wraps an underlying ``Trader`` and adds
-multi-leg execution with partial-fill protection.  If leg *N* fills but
-leg *N+1* fails, all previously filled legs are automatically unwound
-(reversed) in LIFO order using current market prices.
+This is not atomic execution. A trader may leave orders outstanding or raise
+without reporting whether an order filled. Known fills are unwound in LIFO order
+when requested; uncertain venue state must be reconciled by the caller.
 """
 
 from __future__ import annotations
@@ -11,189 +10,343 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from oracle3.ticker.ticker import Ticker
 from oracle3.trader.types import (
+    Order,
+    OrderFailureReason,
+    OrderStatus,
     PlaceOrderResult,
     TradeSide,
 )
 
 if TYPE_CHECKING:
-    from oracle3.ticker.ticker import Ticker
     from oracle3.trader.trader import Trader
 
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Data classes
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class SpreadLeg:
-    """A single leg of a spread order."""
+    """One order in a spread, with quantities expressed in contracts."""
 
     side: TradeSide
     ticker: Ticker
     price: Decimal
     quantity: Decimal
 
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            'side': self.side.value,
+            'ticker': {'symbol': self.ticker.symbol, 'name': self.ticker.name},
+            'price': str(self.price),
+            'quantity': str(self.quantity),
+        }
+
+
+@dataclass
+class ResidualExposure:
+    """Known position change from an unsuccessful spread; positive means long.
+
+    Quantities are relative to positions before the attempt. They exclude any
+    unknown fills, so an empty list does not prove flat when execution is uncertain.
+    """
+
+    ticker: Ticker
+    quantity: Decimal
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            'ticker': {'symbol': self.ticker.symbol, 'name': self.ticker.name},
+            'quantity': str(self.quantity),
+        }
+
+
+@dataclass
+class UnwindAttempt:
+    """Recovery of one original leg (``leg_index`` is one-based)."""
+
+    leg_index: int
+    leg: SpreadLeg
+    result: PlaceOrderResult | None = None
+    failure_reason: str = ''
+    execution_uncertain: bool = False
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            'leg_index': self.leg_index,
+            'leg': self.leg.to_payload(),
+            'result': self.result.to_payload() if self.result is not None else None,
+            'failure_reason': self.failure_reason,
+            'execution_uncertain': self.execution_uncertain,
+        }
+
 
 @dataclass
 class SpreadOrderResult:
-    """Result of a multi-leg spread execution attempt.
+    """Observed execution, never a guarantee of atomicity or venue cancellation.
 
-    Attributes:
-        success: True when every leg filled successfully.
-        leg_results: Per-leg ``PlaceOrderResult`` objects in execution order.
-        hedged: True if a partial fill was detected *and* unwinding was
-            performed for the already-filled legs.
-        unwind_details: Human-readable description of what was unwound
-            (empty string when no unwind occurred).
-        failure_reason: Short explanation when ``success`` is False.
+    ``success`` requires every requested quantity to be confirmed fully filled.
+    ``hedged`` means recovery neutralized all known fills and no order is uncertain.
+    It describes this attempt's position change, not the account's total position.
+    Pending/partial orders and exceptions require reconciliation even if known
+    fills were reversed. No cancellation or retry is implied by this result.
     """
 
     success: bool
     leg_results: list[PlaceOrderResult] = field(default_factory=list)
     hedged: bool = False
-    unwind_details: str = ""
-    failure_reason: str = ""
+    unwind_details: str = ''
+    failure_reason: str = ''
+    requested_legs: list[SpreadLeg] = field(default_factory=list)
+    unwind_results: list[UnwindAttempt] = field(default_factory=list)
+    residual_exposures: list[ResidualExposure] = field(default_factory=list)
+    execution_uncertain: bool = False
+    uncertain_leg_indices: list[int] = field(default_factory=list)
 
     @property
     def all_filled(self) -> bool:
-        """True when every leg resulted in a fill with quantity > 0."""
-        return all(
-            r.order is not None and r.order.filled_quantity > 0
-            for r in self.leg_results
+        """Require nonempty, complete, exact confirmations for all requested legs."""
+        return (
+            bool(self.requested_legs)
+            and len(self.leg_results) == len(self.requested_legs)
+            and all(
+                not _inspect_result(result, leg)[1]
+                for leg, result in zip(self.requested_legs, self.leg_results)
+            )
         )
 
+    @property
+    def requires_reconciliation(self) -> bool:
+        return self.execution_uncertain or bool(self.residual_exposures)
 
-# ---------------------------------------------------------------------------
-# Executor
-# ---------------------------------------------------------------------------
+    def to_payload(self) -> dict[str, Any]:
+        """JSON-safe state for agents; decimal quantities retain their precision."""
+        return {
+            'success': self.success,
+            'all_filled': self.all_filled,
+            'hedged': self.hedged,
+            'failure_reason': self.failure_reason,
+            'unwind_details': self.unwind_details,
+            'execution_uncertain': self.execution_uncertain,
+            'requires_reconciliation': self.requires_reconciliation,
+            'uncertain_leg_indices': self.uncertain_leg_indices,
+            'requested_legs': [leg.to_payload() for leg in self.requested_legs],
+            'leg_results': [result.to_payload() for result in self.leg_results],
+            'unwind_results': [attempt.to_payload() for attempt in self.unwind_results],
+            'residual_exposures': [
+                item.to_payload() for item in self.residual_exposures
+            ],
+        }
+
+
+def _valid_decimal(value: object, *, positive: bool = False) -> bool:
+    return (
+        isinstance(value, Decimal)
+        and value.is_finite()
+        and (value > 0 if positive else value >= 0)
+    )
+
+
+def _inspect_result(
+    result: PlaceOrderResult, leg: SpreadLeg
+) -> tuple[Decimal, str, bool]:
+    """Return known fill, failure description and uncertainty for one response."""
+    order = result.order
+    if order is None:
+        reason = result.failure_reason
+        known_rejection = reason is not None and reason != OrderFailureReason.UNKNOWN
+        return (
+            Decimal('0'),
+            reason.value if reason else 'no order returned',
+            not known_rejection,
+        )
+    if (
+        not isinstance(order, Order)
+        or order.ticker != leg.ticker
+        or order.side != leg.side
+        or not _valid_decimal(order.filled_quantity)
+    ):
+        return Decimal('0'), 'invalid or mismatched order response', True
+    filled = order.filled_quantity
+    if not _valid_decimal(order.remaining) or not isinstance(order.status, OrderStatus):
+        return filled, 'invalid order state', True
+    uncertain = order.status in {
+        OrderStatus.PLACED,
+        OrderStatus.PARTIALLY_FILLED,
+        OrderStatus.UNKNOWN,
+    } or (order.status == OrderStatus.FILLED and order.remaining != 0)
+    if order.status == OrderStatus.REJECTED and filled > 0:
+        uncertain = True
+    if result.failure_reason == OrderFailureReason.UNKNOWN:
+        uncertain = True
+    if (
+        order.status == OrderStatus.FILLED
+        and filled == leg.quantity
+        and order.remaining == 0
+        and result.failure_reason is None
+    ):
+        return filled, '', False
+    failure = (
+        result.failure_reason.value
+        if result.failure_reason is not None
+        else f'{order.status.value}: filled {filled} of {leg.quantity}'
+    )
+    return filled, failure, uncertain
 
 
 class SpreadExecutor:
-    """Execute multi-leg spread orders with automatic hedge on partial fill.
+    """Submit legs sequentially; stop at the first incomplete or uncertain order.
 
-    The executor wraps a ``Trader`` instance and sequentially places each
-    leg of the spread.  If any leg fails after earlier legs have already
-    filled, the filled legs are unwound in reverse order to restore a
-    hedged (flat) position.
-
-    Usage::
-
-        executor = SpreadExecutor(trader)
-        result = await executor.execute_spread([
-            SpreadLeg(TradeSide.BUY, ticker_a, ask_a, qty),
-            SpreadLeg(TradeSide.SELL, ticker_b, bid_b, qty),
-        ])
-
-        if not result.success and result.hedged:
-            logger.warning('Spread failed, positions unwound: %s', result.unwind_details)
+    On failure, optionally reverse observed fills, including the current partial
+    leg. The Trader API has no cancellation/reconciliation operation, so this
+    helper cannot promise that outstanding orders will not fill later.
     """
 
     def __init__(self, trader: Trader) -> None:
         self._trader = trader
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
     async def execute_spread(
-        self,
-        legs: list[SpreadLeg],
-        *,
-        unwind_on_partial: bool = True,
+        self, legs: list[SpreadLeg], *, unwind_on_partial: bool = True
     ) -> SpreadOrderResult:
-        """Execute a multi-leg spread order sequentially.
-
-        Legs are executed in the order given.  If a leg fails and
-        ``unwind_on_partial`` is True, all previously filled legs are
-        unwound (reversed) using current market prices.
-
-        Args:
-            legs: Ordered list of spread legs to execute.
-            unwind_on_partial: When True, automatically unwind filled
-                legs if a subsequent leg fails.
-
-        Returns:
-            ``SpreadOrderResult`` with per-leg results and hedge status.
-        """
         if not legs:
-            return SpreadOrderResult(
-                success=False,
-                leg_results=[],
-                failure_reason="no legs provided",
-            )
+            return SpreadOrderResult(success=False, failure_reason='no legs provided')
+        for i, leg in enumerate(legs, start=1):
+            if (
+                not isinstance(leg, SpreadLeg)
+                or not isinstance(leg.side, TradeSide)
+                or not isinstance(leg.ticker, Ticker)
+                or not _valid_decimal(leg.price, positive=True)
+                or not _valid_decimal(leg.quantity, positive=True)
+            ):
+                return SpreadOrderResult(
+                    success=False, failure_reason=f'leg {i} has invalid order inputs'
+                )
+        # Snapshot requests so a caller cannot mutate them across awaits.
+        requested = [
+            SpreadLeg(leg.side, leg.ticker, leg.price, leg.quantity) for leg in legs
+        ]
+        outcome = SpreadOrderResult(success=False, requested_legs=requested)
+        known: dict[Ticker, Decimal] = {}
+        filled_legs: list[tuple[int, SpreadLeg, Decimal]] = []
+        for index, leg in enumerate(requested, start=1):
+            result, failure, uncertain, filled = await self._submit(leg)
+            outcome.leg_results.append(result)
+            if filled > 0:
+                self._add_exposure(known, leg, filled)
+                filled_legs.append((index, leg, filled))
+            if uncertain:
+                outcome.execution_uncertain = True
+                outcome.uncertain_leg_indices.append(index)
+            if failure:
+                outcome.failure_reason = f'leg {index} failed: {failure}'
+                if unwind_on_partial and filled_legs:
+                    await self._unwind(filled_legs, known, outcome)
+                outcome.residual_exposures = [
+                    ResidualExposure(ticker, quantity)
+                    for ticker, quantity in known.items()
+                    if quantity != 0
+                ]
+                outcome.hedged = (
+                    bool(outcome.unwind_results)
+                    and not outcome.residual_exposures
+                    and not outcome.execution_uncertain
+                )
+                return outcome
+        outcome.success = True
+        return outcome
 
-        results: list[PlaceOrderResult] = []
-        filled_legs: list[tuple[SpreadLeg, PlaceOrderResult]] = []
-
-        for i, leg in enumerate(legs):
-            leg_label = f"{i + 1}/{len(legs)}"
-            logger.info(
-                "Spread leg %s: %s %s qty=%s @ %s",
-                leg_label,
-                leg.side.value,
-                leg.ticker.symbol,
-                leg.quantity,
-                leg.price,
-            )
-
+    async def _submit(
+        self, leg: SpreadLeg
+    ) -> tuple[PlaceOrderResult, str, bool, Decimal]:
+        try:
             result = await self._trader.place_order(
                 side=leg.side,
                 ticker=leg.ticker,
                 limit_price=leg.price,
                 quantity=leg.quantity,
             )
-            results.append(result)
+        except Exception as exc:
+            # A timeout/transport exception cannot establish whether a venue filled.
+            logger.warning(
+                'Order outcome uncertain for %s (%s)',
+                leg.ticker.symbol,
+                type(exc).__name__,
+            )
+            return (
+                PlaceOrderResult(failure_reason=OrderFailureReason.UNKNOWN),
+                f'order raised {type(exc).__name__}; reconcile venue state',
+                True,
+                Decimal('0'),
+            )
+        if not isinstance(result, PlaceOrderResult):
+            return (
+                PlaceOrderResult(failure_reason=OrderFailureReason.UNKNOWN),
+                'invalid trader response; reconcile venue state',
+                True,
+                Decimal('0'),
+            )
+        try:
+            filled, failure, uncertain = _inspect_result(result, leg)
+            # A malformed adapter response must not break the agent-facing payload.
+            result.to_payload()
+        except Exception:
+            return (
+                PlaceOrderResult(failure_reason=OrderFailureReason.UNKNOWN),
+                'malformed order response; reconcile venue state',
+                True,
+                Decimal('0'),
+            )
+        return result, failure, uncertain, filled
 
-            if result.order is not None and result.order.filled_quantity > 0:
-                filled_legs.append((leg, result))
-                logger.info(
-                    "Spread leg %s filled: qty=%s @ avg %s",
-                    leg_label,
-                    result.order.filled_quantity,
-                    result.order.average_price,
-                )
-            else:
-                # Leg failed
-                failure = (
-                    result.failure_reason.value
-                    if result.failure_reason is not None
-                    else "unknown"
-                )
-                logger.warning(
-                    "Spread leg %s failed: %s  (filled so far: %d)",
-                    leg_label,
-                    failure,
-                    len(filled_legs),
-                )
+    @staticmethod
+    def _add_exposure(
+        known: dict[Ticker, Decimal], leg: SpreadLeg, filled: Decimal
+    ) -> None:
+        signed = filled if leg.side == TradeSide.BUY else -filled
+        known[leg.ticker] = known.get(leg.ticker, Decimal('0')) + signed
 
-                if unwind_on_partial and filled_legs:
-                    logger.info(
-                        "Unwinding %d previously filled leg(s)", len(filled_legs)
-                    )
-                    unwind_details = await self._unwind(filled_legs)
-                    return SpreadOrderResult(
-                        success=False,
-                        leg_results=results,
-                        hedged=True,
-                        unwind_details=unwind_details,
-                        failure_reason=f"leg {i + 1} failed: {failure}",
-                    )
-
-                return SpreadOrderResult(
-                    success=False,
-                    leg_results=results,
-                    hedged=False,
-                    failure_reason=f"leg {i + 1} failed: {failure}",
+    async def _unwind(
+        self,
+        filled_legs: list[tuple[int, SpreadLeg, Decimal]],
+        known: dict[Ticker, Decimal],
+        outcome: SpreadOrderResult,
+    ) -> None:
+        details: list[str] = []
+        for index, original, filled in reversed(filled_legs):
+            side = TradeSide.SELL if original.side == TradeSide.BUY else TradeSide.BUY
+            leg = SpreadLeg(side, original.ticker, original.price, filled)
+            attempt = UnwindAttempt(index, leg)
+            outcome.unwind_results.append(attempt)
+            try:
+                md = self._trader.market_data
+                quote = (
+                    md.get_best_bid(leg.ticker)
+                    if side == TradeSide.SELL
+                    else md.get_best_ask(leg.ticker)
                 )
-
-        logger.info("Spread completed successfully (%d legs)", len(legs))
-        return SpreadOrderResult(success=True, leg_results=results)
+                if quote is None or not _valid_decimal(quote.price, positive=True):
+                    attempt.failure_reason = 'no valid executable quote for unwind'
+                else:
+                    leg.price = quote.price
+            except Exception as exc:
+                # Quote access failed before an order was submitted.
+                attempt.failure_reason = (
+                    f'unwind preparation raised {type(exc).__name__}'
+                )
+            if not attempt.failure_reason:
+                result, failure, uncertain, reversed_fill = await self._submit(leg)
+                attempt.result = result
+                attempt.failure_reason = failure
+                attempt.execution_uncertain = uncertain
+                outcome.execution_uncertain |= uncertain
+                self._add_exposure(known, leg, reversed_fill)
+            label = 'FAILED' if attempt.failure_reason else 'FILLED'
+            details.append(
+                f'{label} unwind {side.value} {leg.ticker.symbol} qty={filled}: {attempt.failure_reason or "confirmed"}'
+            )
+        outcome.unwind_details = '; '.join(details)
 
     async def execute_pair_spread(
         self,
@@ -203,106 +356,24 @@ class SpreadExecutor:
         *,
         unwind_on_partial: bool = True,
     ) -> SpreadOrderResult:
-        """Convenience method for a simple 2-leg spread (buy A, sell B).
-
-        Automatically reads the best ask/bid from the trader's
-        ``market_data`` for pricing.
-        """
+        """Read best ask/bid and attempt a buy/sell pair with the same contract size."""
         md = self._trader.market_data
-
         ask = md.get_best_ask(buy_ticker)
         bid = md.get_best_bid(sell_ticker)
-
         if ask is None:
             return SpreadOrderResult(
                 success=False,
-                leg_results=[],
-                failure_reason=f"no ask available for {buy_ticker.symbol}",
+                failure_reason=f'no ask available for {buy_ticker.symbol}',
             )
         if bid is None:
             return SpreadOrderResult(
                 success=False,
-                leg_results=[],
-                failure_reason=f"no bid available for {sell_ticker.symbol}",
+                failure_reason=f'no bid available for {sell_ticker.symbol}',
             )
-
-        legs = [
-            SpreadLeg(TradeSide.BUY, buy_ticker, ask.price, quantity),
-            SpreadLeg(TradeSide.SELL, sell_ticker, bid.price, quantity),
-        ]
-
         return await self.execute_spread(
-            legs, unwind_on_partial=unwind_on_partial
+            [
+                SpreadLeg(TradeSide.BUY, buy_ticker, ask.price, quantity),
+                SpreadLeg(TradeSide.SELL, sell_ticker, bid.price, quantity),
+            ],
+            unwind_on_partial=unwind_on_partial,
         )
-
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
-
-    async def _unwind(
-        self,
-        filled_legs: list[tuple[SpreadLeg, PlaceOrderResult]],
-    ) -> str:
-        """Reverse all filled legs in LIFO order to hedge out the partial spread.
-
-        Uses current market prices for urgency:
-        - Selling an unwound BUY  -> use best bid
-        - Buying  an unwound SELL -> use best ask
-
-        Returns a human-readable summary of the unwind actions.
-        """
-        md = self._trader.market_data
-        details_parts: list[str] = []
-
-        for leg, result in reversed(filled_legs):
-            if result.order is None:
-                continue
-
-            filled_qty = result.order.filled_quantity
-            if filled_qty <= 0:
-                continue
-
-            # Reverse the side
-            reverse_side = (
-                TradeSide.SELL if leg.side == TradeSide.BUY else TradeSide.BUY
-            )
-
-            # Use market price for urgency
-            if reverse_side == TradeSide.SELL:
-                bid = md.get_best_bid(leg.ticker)
-                price = bid.price if bid is not None else leg.price
-            else:
-                ask = md.get_best_ask(leg.ticker)
-                price = ask.price if ask is not None else leg.price
-
-            logger.info(
-                "Unwinding: %s %s qty=%s @ %s",
-                reverse_side.value,
-                leg.ticker.symbol,
-                filled_qty,
-                price,
-            )
-
-            try:
-                await self._trader.place_order(
-                    side=reverse_side,
-                    ticker=leg.ticker,
-                    limit_price=price,
-                    quantity=filled_qty,
-                )
-                details_parts.append(
-                    f"{reverse_side.value} {leg.ticker.symbol} "
-                    f"qty={filled_qty} @ {price}"
-                )
-            except Exception:
-                logger.exception(
-                    "CRITICAL: Failed to unwind leg %s "
-                    "-- MANUAL INTERVENTION REQUIRED",
-                    leg.ticker.symbol,
-                )
-                details_parts.append(
-                    f"FAILED unwind {reverse_side.value} {leg.ticker.symbol} "
-                    f"qty={filled_qty} -- MANUAL INTERVENTION REQUIRED"
-                )
-
-        return "; ".join(details_parts)

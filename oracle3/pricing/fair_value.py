@@ -70,22 +70,52 @@ _TV_BETA_EXTREMITY = -0.2902
 # Volume thresholds for alpha targeting
 _VOLUME_HIGH_THRESHOLD = 10000.0  # lambda ≈ 0 above this
 _VOLUME_MEDIUM_RANGE = (500.0, 10000.0)  # sweet spot for premium alpha
+_SIGNAL_TOLERANCE = 1e-6  # dollars; above the normal-function approximation error
 
 
 @dataclass(frozen=True)
 class FairValueEstimate:
-    """Result of fair value estimation for a single contract."""
+    """Model-implied decomposition and optional independent-forecast comparison.
+
+    ``mispricing_signal`` is market price minus ``benchmark_market_price``,
+    in dollars per contract. Without a reference probability it is exactly
+    zero: no independent comparison was made, not evidence of fair pricing.
+    """
 
     market_price: float
     fair_value: float  # estimated physical probability
     risk_premium: float  # market_price - fair_value
-    mispricing_signal: float  # normalized signal for trading
+    mispricing_signal: float  # signed price residual; not a fee-adjusted trade edge
     lambda_base: float  # base lambda from calibrator
     lambda_adjusted: float  # lambda after covariate adjustment
     confidence: float  # model confidence [0, 1]
     category: str
     volume_tier: str  # 'low', 'medium', 'high', 'very_high'
     is_premium_alpha_target: bool  # whether this is in the alpha sweet spot
+    reference_probability: float | None = None
+    benchmark_market_price: float | None = None
+
+
+def _compare_reference(
+    market_price: float,
+    distortion: ProbitDistortion,
+    reference_probability: float | None,
+) -> tuple[float | None, float]:
+    """Compare with an explicit forecast, never the inverse-derived probability."""
+    if reference_probability is None:
+        return None, 0.0
+    if (
+        not math.isfinite(reference_probability)
+        or not 0.0 <= reference_probability <= 1.0
+    ):
+        raise ValueError('reference_probability must be finite and in [0, 1]')
+    benchmark = (
+        reference_probability
+        if reference_probability in (0.0, 1.0)
+        else distortion.distort(reference_probability)
+    )
+    residual = market_price - benchmark
+    return benchmark, residual if abs(residual) > _SIGNAL_TOLERANCE else 0.0
 
 
 class FairValueEstimator:
@@ -133,20 +163,34 @@ class FairValueEstimator:
         spread: float | None = None,
         tau: float | None = None,
         features: ContractFeatures | None = None,
+        *,
+        reference_probability: float | None = None,
     ) -> FairValueEstimate:
         """Estimate fair value for a contract.
 
         Parameters
         ----------
-        market_price: observed market price (0 to 1)
+        market_price: finite observed market price in [0, 1], preserved as quoted
         category: contract category for calibration lookup
         volume: trading volume (USD)
         duration_hours: contract duration in hours
         spread: bid-ask spread
         tau: lifecycle position [0=new, 1=resolution] for time-varying model
         features: pre-extracted contract features (overrides individual params)
+        reference_probability: optional independent physical-probability forecast
+            in [0, 1], available at the decision time. Do not derive it by
+            inverting this same market price. Its Wang-transformed value is
+            the benchmark for the signed price residual ``mispricing_signal``.
+
+        The inverse-derived ``fair_value`` and ``risk_premium`` remain a model
+        decomposition. Without a reference, the signal is exactly zero and
+        does not assess mispricing. With one, a positive signal means the
+        market is above the model-adjusted forecast; it does not guarantee
+        convergence or profit. Residuals within 1e-6 dollars are zeroed to
+        avoid interpreting the normal-function approximation error as a signal.
         """
-        market_price = max(0.01, min(0.99, market_price))
+        if not math.isfinite(market_price) or not 0.0 <= market_price <= 1.0:
+            raise ValueError('market_price must be finite and in [0, 1]')
 
         # Extract features if not provided
         if features is not None:
@@ -170,17 +214,24 @@ class FairValueEstimator:
         else:
             adjusted_lambda = base_lambda
 
-        # Apply distortion inverse
+        if not math.isfinite(base_lambda) or not math.isfinite(adjusted_lambda):
+            raise ValueError('calibrated and adjusted lambda must be finite')
+
+        # Preserve the quote, including the exact probability endpoints.
+        # The distortion handles numerical clipping internally for its probit.
         distortion = ProbitDistortion(adjusted_lambda)
-        fair_value = distortion.inverse(market_price)
+        fair_value = (
+            market_price
+            if market_price in (0.0, 1.0)
+            else distortion.inverse(market_price)
+        )
         risk_premium = market_price - fair_value
 
-        # Compute mispricing signal
-        expected_premium = distortion.risk_premium(fair_value)
-        if abs(expected_premium) > 1e-6:
-            mispricing_signal = (risk_premium - expected_premium) / abs(expected_premium)
-        else:
-            mispricing_signal = 0.0
+        # Inverting and then reapplying the same model gives no independent
+        # evidence of mispricing. Only compare against an explicit forecast.
+        benchmark_market_price, mispricing_signal = _compare_reference(
+            market_price, distortion, reference_probability
+        )
 
         # Volume tier classification
         volume_tier = self._classify_volume(volume)
@@ -206,6 +257,8 @@ class FairValueEstimator:
             category=category,
             volume_tier=volume_tier,
             is_premium_alpha_target=is_target,
+            reference_probability=reference_probability,
+            benchmark_market_price=benchmark_market_price,
         )
 
     def estimate_batch(
@@ -214,15 +267,23 @@ class FairValueEstimator:
         category: str = 'default',
         volumes: dict[str, float] | None = None,
         durations: dict[str, float] | None = None,
+        *,
+        reference_probabilities: dict[str, float] | None = None,
     ) -> dict[str, FairValueEstimate]:
-        """Estimate fair values for multiple contracts."""
+        """Estimate values with optional independent forecasts keyed by symbol.
+
+        Symbols without a reference retain a decomposition-only, zero signal.
+        """
         results: dict[str, FairValueEstimate] = {}
         for sym, price in prices.items():
             vol = (volumes or {}).get(sym)
             dur = (durations or {}).get(sym)
             results[sym] = self.estimate(
-                market_price=price, category=category,
-                volume=vol, duration_hours=dur,
+                market_price=price,
+                category=category,
+                volume=vol,
+                duration_hours=dur,
+                reference_probability=(reference_probabilities or {}).get(sym),
             )
         return results
 
@@ -232,15 +293,19 @@ class FairValueEstimator:
         min_confidence: float = 0.25,
         premium_alpha_only: bool = True,
     ) -> list[tuple[str, FairValueEstimate]]:
-        """Rank contracts by trading opportunity quality.
+        """Rank independent-forecast residuals by magnitude times confidence.
 
-        Filters for the medium-liquidity alpha sweet spot where the
-        Wang model has the most predictive power.
+        Decomposition-only estimates and zero residuals are excluded. The
+        optional volume filter and model confidence do not validate the input
+        forecast, account for fees, or establish that a residual is tradable.
         """
         filtered = [
             (sym, est)
             for sym, est in estimates.items()
-            if est.confidence >= min_confidence
+            if est.reference_probability is not None
+            and est.benchmark_market_price is not None
+            and abs(est.mispricing_signal) > _SIGNAL_TOLERANCE
+            and est.confidence >= min_confidence
             and (not premium_alpha_only or est.is_premium_alpha_target)
         ]
         # Sort by |mispricing_signal| * confidence (quality-weighted)

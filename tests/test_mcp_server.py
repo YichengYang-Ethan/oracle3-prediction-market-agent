@@ -59,7 +59,7 @@ POLY_BOOKS = {
 def kalshi_route(path: str) -> httpx.Response:
     if path.endswith('/orderbook'):
         return httpx.Response(200, json=KALSHI_BOOK)
-    if path.endswith(f"/markets/{KALSHI_MARKET['ticker']}"):
+    if path.endswith(f'/markets/{KALSHI_MARKET["ticker"]}'):
         return httpx.Response(200, json={'market': KALSHI_MARKET})
     if path.endswith('/markets'):
         return httpx.Response(200, json={'markets': [KALSHI_MARKET]})
@@ -98,7 +98,7 @@ def kalshi_route(path: str) -> httpx.Response:
 def polymarket_route(host: str, path: str, params: httpx.QueryParams) -> httpx.Response:
     if host == 'clob.polymarket.com' and path == '/book':
         return httpx.Response(200, json=POLY_BOOKS[params['token_id']])
-    if path == f"/markets/{POLY_MARKET['id']}":
+    if path == f'/markets/{POLY_MARKET["id"]}':
         return httpx.Response(200, json=POLY_MARKET)
     if path == '/markets':
         return httpx.Response(200, json=[POLY_MARKET])
@@ -240,6 +240,11 @@ async def test_live_same_event_check_across_venues():
     assert out['best']['description'] == 'YES on A + NO on B'
     assert out['best']['gross_edge'] == pytest.approx(0.02)
     assert len(out['quotes']) == 2
+    assert out['assessment'] == {
+        'relation_verified': False,
+        'execution_verified': False,
+        'conditional_on_relation': True,
+    }
 
 
 async def test_offline_check_constraint():
@@ -252,6 +257,98 @@ async def test_offline_check_constraint():
         ],
     )
     assert out['best']['net_edge'] == pytest.approx(0.0158)
+    assert out['assessment'] == {
+        'relation_verified': False,
+        'execution_verified': False,
+        'conditional_on_relation': True,
+    }
+
+
+@pytest.mark.parametrize('contracts', [float('nan'), float('inf'), -float('inf')])
+async def test_constraint_rejects_nonfinite_size_when_all_prices_missing(contracts):
+    with pytest.raises(Exception, match='contracts must be finite and positive'):
+        await call(
+            'check_constraint',
+            relation='implication',
+            quotes=[{'market_id': 'A'}, {'market_id': 'B'}],
+            contracts=contracts,
+        )
+
+
+@pytest.mark.parametrize('field', ['yes_bid', 'yes_ask', 'no_bid', 'no_ask'])
+@pytest.mark.parametrize('price', [float('nan'), float('inf'), -0.01, 1.01])
+async def test_constraint_rejects_invalid_unused_quote_field(field, price):
+    with pytest.raises(Exception, match=f'{field} must be finite and between 0 and 1'):
+        await call(
+            'check_constraint',
+            relation='implication',
+            quotes=[{'market_id': 'A'}, {'market_id': 'B', field: price}],
+        )
+
+
+async def test_constraint_rejects_repeated_outcome_in_group():
+    with pytest.raises(Exception, match='duplicate contract: kalshi:A'):
+        await call(
+            'check_constraint',
+            relation='event_sum',
+            quotes=[{'market_id': 'A', 'yes_ask': 0.3}] * 2,
+        )
+
+
+async def test_constraint_allows_same_id_on_different_venues():
+    out = await call(
+        'check_constraint',
+        relation='same_event',
+        quotes=[
+            {'market_id': 'A', 'venue': 'kalshi', 'yes_ask': 0.4},
+            {'market_id': 'A', 'venue': 'polymarket', 'no_ask': 0.55},
+        ],
+    )
+    assert out['profitable_after_fees']
+    assert {leg['venue'] for leg in out['best']['legs']} == {'kalshi', 'polymarket'}
+
+
+@pytest.mark.parametrize('market_id', ['', '  '])
+async def test_constraint_rejects_blank_identity(market_id):
+    with pytest.raises(Exception, match='market_id must be a nonblank string'):
+        await call(
+            'check_constraint',
+            relation='implication',
+            quotes=[{'market_id': market_id}, {'market_id': 'B'}],
+        )
+
+
+@pytest.mark.parametrize('invalid', ['size', 'duplicate', 'blank'])
+async def test_live_constraint_rejects_invalid_input_before_http(invalid):
+    requests = []
+
+    def unexpected_request(request):
+        requests.append(request)
+        return httpx.Response(500, text='invalid input should not fetch quotes')
+
+    venues.set_transport(httpx.MockTransport(unexpected_request))
+    markets = [
+        {'venue': 'kalshi', 'market_id': 'A'},
+        {'venue': 'kalshi', 'market_id': 'B'},
+    ]
+    contracts = 1.0
+    if invalid == 'size':
+        contracts = float('nan')
+        message = 'contracts must be finite and positive'
+    elif invalid == 'duplicate':
+        markets[1]['market_id'] = 'A'
+        message = 'duplicate contract'
+    else:
+        markets[0]['market_id'] = ' '
+        message = 'market_id must be a nonblank string'
+    with pytest.raises(Exception, match=message):
+        await call(
+            'check_constraint_live',
+            relation='same_event',
+            markets=markets,
+            contracts=contracts,
+        )
+    assert requests == []
 
 
 async def test_trading_fee_and_fair_value():
@@ -259,6 +356,12 @@ async def test_trading_fee_and_fair_value():
     assert fee['fee'] == pytest.approx(1.75)
     fv = await call('fair_value', market_price=0.57)
     assert fv['implied_probability'] == pytest.approx(0.497, abs=1e-3)
+
+
+@pytest.mark.parametrize('lam', [float('nan'), float('inf'), -float('inf')])
+async def test_fair_value_rejects_nonfinite_lambda(lam):
+    with pytest.raises(Exception, match='lam must be finite'):
+        await call('fair_value', market_price=0.57, lam=lam)
 
 
 async def test_paper_order_walks_the_book_and_charges_fees():
@@ -310,7 +413,7 @@ def test_registry_manifest_matches_package():
     assert manifest['packages'][0]['identifier'] == 'oracle3'
     assert len(manifest['description']) <= 100
     readme = (root / 'README.md').read_text()
-    assert f"mcp-name: {manifest['name']}" in readme
+    assert f'mcp-name: {manifest["name"]}' in readme
 
 
 async def test_non_finite_size_is_a_readable_error():

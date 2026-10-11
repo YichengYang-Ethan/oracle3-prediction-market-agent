@@ -22,6 +22,7 @@ import argparse
 import functools
 import inspect
 import logging
+import math
 from collections.abc import Callable
 from decimal import Decimal
 from typing import Annotated, Any, Literal
@@ -68,7 +69,7 @@ RelationArg = Annotated[
 ContractsArg = Annotated[
     float,
     Field(
-        description='Contracts bought on every leg (default 1). Fees scale with size.'
+        description='Finite, positive contracts bought on every leg (default 1). Fees scale with size.'
     ),
 ]
 MakerArg = Annotated[
@@ -94,8 +95,10 @@ legs of the best basket.
 
 Relations: implication (A implies B), exclusivity (at most one outcome),
 complement (exactly one of two), same_event (one event on two venues),
-event_sum (exactly one of n). Whether a relation actually holds is your
-judgment; read both markets' resolution rules before relying on a result.
+event_sum (exactly one of n). The checks calculate price bounds conditional on
+the supplied relation; they do not verify resolution rules, order-book depth
+or full fills. Results explicitly mark relation_verified and execution_verified
+false. Read both markets' resolution rules before relying on a result.
 
 Fees follow each market's own schedule from the venue API: Kalshi taker
 0.07*M*C*P*(1-P) (maker 0.0175*M*C*P*(1-P) only on series with maker fees),
@@ -420,14 +423,18 @@ def check_constraint(
     contracts: ContractsArg = 1.0,
     maker: MakerArg = False,
 ) -> dict[str, Any]:
-    """Check offline whether prices you supply violate a no-arbitrage relation, and price the cheapest exploiting basket after fees.
+    """Calculate a price-bound violation and basket economics conditional on the relation you supply.
 
     A pure calculation with no network calls: use it for hypothetical or
     historical prices, and use check_constraint_live to fetch current quotes
     instead. Returns violated, profitable_after_fees, the best basket (legs,
-    cost, guaranteed payoff, fees, gross and net edge), every candidate basket,
+    cost, conditional payoff bound, fees, gross and net edge), every candidate basket,
     any missing quotes, and the assumptions behind the check (full fills at the
-    quoted prices, a correctly specified relation).
+    quoted prices, a correctly specified relation). The assessment object marks
+    relation_verified=false, execution_verified=false and conditional_on_relation=true:
+    this tool does not verify resolution rules, order-book depth or full fills.
+    Quote prices must be finite and in [0, 1]; prices used to calculate fees must
+    be strictly between 0 and 1. Each (venue, market_id) must be unique.
     """
     parsed = [
         Quote(
@@ -461,7 +468,7 @@ async def check_constraint_live(
     contracts: ContractsArg = 1.0,
     maker: MakerArg = False,
 ) -> dict[str, Any]:
-    """Fetch live quotes and fee schedules for related markets, then check whether their prices violate a no-arbitrage relation after fees.
+    """Fetch live quotes and fees, then calculate price bounds conditional on the supplied relation.
 
     This is the main research call: find related contracts with search_markets,
     confirm with get_market that their resolution rules really satisfy the
@@ -469,7 +476,16 @@ async def check_constraint_live(
     and places no orders. Returns the check_constraint result (violated,
     profitable_after_fees, best basket with net edge) plus the quotes it used;
     to simulate the trade, call paper_order for each leg of the best basket.
+    Live quotes do not verify resolution rules, order-book depth or full fills:
+    assessment.relation_verified and assessment.execution_verified remain false.
     """
+    # Reject invalid sizes and repeated/blank identities before fetching quotes.
+    _check(
+        relation,
+        [Quote(market_id=m.market_id, venue=m.venue) for m in markets],
+        contracts=contracts,
+        maker=maker,
+    )
     quotes = [await venues.quote(m.venue, m.market_id) for m in markets]
     result = _check(relation, quotes, contracts=contracts, maker=maker).to_dict()
     result['quotes'] = [_quote_dict(q) for q in quotes]
@@ -519,6 +535,8 @@ def fair_value(
     """
     if not 0.0 < market_price < 1.0:
         raise ValueError('market_price must be strictly between 0 and 1')
+    if not math.isfinite(lam):
+        raise ValueError('lam must be finite')
     implied = ProbitDistortion(lam).inverse(market_price)
     return {
         'market_price': market_price,
