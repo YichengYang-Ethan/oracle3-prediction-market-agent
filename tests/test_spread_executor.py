@@ -549,7 +549,7 @@ class TestSpreadRecoveryContract:
             (OrderStatus.PARTIALLY_FILLED, True),
         ],
     )
-    async def test_unwind_includes_current_partial_leg_but_pending_order_prevents_hedged(
+    async def test_only_terminal_partial_can_be_automatically_unwound(
         self, setup_spread, status, uncertain
     ):
         trader, legs = setup_spread
@@ -567,6 +567,11 @@ class TestSpreadRecoveryContract:
         assert result.hedged is (not uncertain)
         assert result.execution_uncertain is uncertain
         assert result.requires_reconciliation is uncertain
+        if uncertain:
+            assert _residuals(result) == {'A': Decimal('10'), 'B': Decimal('1')}
+            assert place.await_count == 2
+            assert not result.unwind_results
+            return
         assert not result.residual_exposures
         assert [c.kwargs['quantity'] for c in place.await_args_list] == [
             Decimal('10'),
@@ -618,7 +623,7 @@ class TestSpreadRecoveryContract:
         assert result.unwind_results[0].execution_uncertain is uncertain
         assert result.requires_reconciliation
 
-    async def test_leg_exception_recovers_prior_fills_without_claiming_flat(
+    async def test_leg_exception_preserves_prior_fills_until_reconciled(
         self, setup_spread
     ):
         trader, legs = setup_spread
@@ -631,9 +636,10 @@ class TestSpreadRecoveryContract:
             trader, 'place_order', AsyncMock(side_effect=replies)
         ) as place:
             result = await SpreadExecutor(trader).execute_spread(legs)
-        assert place.await_count == 3
+        assert place.await_count == 2
         assert not result.success and not result.hedged
-        assert not result.residual_exposures
+        assert _residuals(result) == {'A': Decimal('10')}
+        assert not result.unwind_results
         assert result.execution_uncertain and result.requires_reconciliation
         assert result.uncertain_leg_indices == [2]
         assert 'TimeoutError' in result.failure_reason

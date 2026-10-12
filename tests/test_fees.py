@@ -139,3 +139,147 @@ def test_fee_is_symmetric_in_price():
     for schedule in (KalshiSchedule(), PolymarketSchedule()):
         for p in (0.1, 0.25, 0.4):
             assert schedule.fee(p, 37) == schedule.fee(1 - p, 37)
+
+
+@pytest.mark.parametrize('schedule', [{}, {'rate': None}, None, 'unknown'])
+def test_present_but_unknown_polymarket_schedule_is_not_free(schedule):
+    with pytest.raises(UnsupportedFeeSchedule):
+        PolymarketSchedule.from_gamma_market(
+            {'feesEnabled': True, 'feeSchedule': schedule}
+        )
+
+
+@pytest.mark.parametrize(
+    'rate', [-0.01, float('nan'), float('inf'), '-Infinity', '', False]
+)
+def test_invalid_polymarket_rate_is_rejected_at_api_boundary(rate):
+    with pytest.raises(UnsupportedFeeSchedule, match='rate'):
+        PolymarketSchedule.from_gamma_market({'feeSchedule': {'rate': rate}})
+
+
+def test_explicit_zero_and_explicit_disabled_fees_remain_free():
+    zero = PolymarketSchedule.from_gamma_market({'feeSchedule': {'rate': 0}})
+    disabled = PolymarketSchedule.from_gamma_market(
+        {'feesEnabled': False, 'feeSchedule': {'rate': None}}
+    )
+    assert zero.fee(0.5, 100) == 0
+    assert disabled.fee(0.5, 100) == 0
+    assert disabled.describe()['source'] == 'feesEnabled=false'
+
+
+def test_absent_schedule_uses_labeled_default_instead_of_zero():
+    schedule = PolymarketSchedule.from_gamma_market({'feesEnabled': True})
+    assert schedule.fee(0.5, 100) > 0
+    assert 'default' in schedule.describe()['source']
+    assert 'unverified' in default_schedule('kalshi').describe()['source']
+
+
+@pytest.mark.parametrize('bad', [-1, 'NaN', 'Infinity', '-Infinity', None, ''])
+def test_schedule_constructors_reject_invalid_rates_and_multipliers(bad):
+    with pytest.raises(ValueError):
+        PolymarketSchedule(rate=bad)
+    with pytest.raises(ValueError):
+        KalshiSchedule(multiplier=bad)
+    with pytest.raises(UnsupportedFeeSchedule):
+        KalshiSchedule.from_series({'fee_type': 'quadratic', 'fee_multiplier': bad})
+
+
+@pytest.mark.parametrize('bad', [0, -1, 'NaN', 'Infinity', None])
+def test_rounding_increment_must_be_finite_and_positive(bad):
+    with pytest.raises(ValueError, match='increment'):
+        KalshiSchedule(increment=bad)
+
+
+def test_schedule_constructors_normalize_valid_numeric_terms():
+    assert KalshiSchedule(multiplier=2.0, increment=0.01).fee(0.5, 100) == Decimal(
+        '3.5'
+    )
+    assert PolymarketSchedule(rate=0.05).fee(0.5, 100) == Decimal('1.25000')
+
+
+@pytest.mark.parametrize(
+    'bad', [float('nan'), float('inf'), Decimal('-Infinity'), 'bad']
+)
+@pytest.mark.parametrize('maker', [False, True])
+def test_price_and_quantity_must_be_finite_even_when_fees_are_zero(bad, maker):
+    for schedule in (
+        KalshiSchedule(multiplier=Decimal('0')),
+        PolymarketSchedule(rate=Decimal('0')),
+    ):
+        with pytest.raises(ValueError, match='price'):
+            schedule.fee(bad, 1, maker=maker)
+        with pytest.raises(ValueError, match='quantity'):
+            schedule.fee(0.5, bad, maker=maker)
+
+
+@pytest.mark.parametrize('bad', [0, -1])
+def test_quantity_must_be_positive_for_both_venues(bad):
+    for schedule in (KalshiSchedule(), PolymarketSchedule()):
+        with pytest.raises(ValueError, match='quantity'):
+            schedule.fee(0.5, bad)
+
+
+def test_unknown_rate_cannot_create_a_false_fee_free_opportunity():
+    from oracle3.arbitrage import Quote, check_constraint
+
+    raw = {'feesEnabled': True, 'feeSchedule': {'takerOnly': True}}
+    with pytest.raises(UnsupportedFeeSchedule, match='rate'):
+        PolymarketSchedule.from_gamma_market(raw)
+
+    # The same two-cent gross gap is not positive after the explicit default.
+    schedule = PolymarketSchedule.from_gamma_market({})
+    check = check_constraint(
+        'implication',
+        [
+            Quote('A', venue='polymarket', yes_bid=0.51, schedule=schedule),
+            Quote('B', venue='polymarket', yes_ask=0.49, schedule=schedule),
+        ],
+    )
+    assert check.violated
+    assert not check.profitable_after_fees
+
+
+def test_strategy_fee_helper_uses_ticker_venue_and_explicit_terms():
+    from oracle3.strategy.fee_utils import estimate_fee, resolve_fee_schedule
+    from oracle3.ticker.ticker import KalshiTicker, PolyMarketTicker
+
+    kalshi = KalshiTicker(symbol='K-YES', market_ticker='K')
+    poly = PolyMarketTicker(symbol='P-YES', market_id='P')
+    assert estimate_fee(kalshi, Decimal('0.5'), Decimal('100')) == Decimal('1.75')
+    assert estimate_fee(poly, Decimal('0.5'), Decimal('100')) == Decimal('1.75')
+    assert 'default' in resolve_fee_schedule(poly).describe()['source']
+    terms = {
+        'kalshi:K': {'fee_type': 'quadratic', 'fee_multiplier': 2},
+        'P': {'rate': 0.04},
+    }
+    assert estimate_fee(kalshi, 0.5, 100, market_fee_terms=terms) == Decimal('3.5')
+    assert estimate_fee(poly, 0.5, 100, market_fee_terms=terms) == Decimal('1')
+
+
+def test_strategy_fee_helper_prefers_venue_specific_keys_and_shared_schedules():
+    from oracle3.strategy.fee_utils import estimate_fee
+    from oracle3.ticker.ticker import PolyMarketTicker
+
+    ticker = PolyMarketTicker(symbol='TOKEN', market_id='M')
+    terms = {'polymarket:M': PolymarketSchedule(rate=Decimal('0.05')), 'M': {'rate': 0}}
+    assert estimate_fee(ticker, 0.5, 100, market_fee_terms=terms) == Decimal('1.25')
+    with pytest.raises(UnsupportedFeeSchedule, match='another venue'):
+        estimate_fee(ticker, 0.5, 100, market_fee_terms={'M': KalshiSchedule()})
+    with pytest.raises(UnsupportedFeeSchedule, match='missing'):
+        estimate_fee(ticker, 0.5, 100, market_fee_terms={'M': {'feeSchedule': {}}})
+
+
+def test_strategy_fee_helper_requires_explicit_override_for_unknown_venue():
+    from oracle3.strategy.fee_utils import estimate_fee
+    from oracle3.ticker.ticker import SolanaTicker
+
+    ticker = SolanaTicker(symbol='TOKEN')
+    with pytest.raises(UnsupportedFeeSchedule, match='ticker type'):
+        estimate_fee(ticker, 0.5, 100)
+    assert estimate_fee(ticker, 0.5, 100, legacy_fee_per_contract=0) == 0
+    assert estimate_fee(ticker, 0.5, 100, legacy_fee_per_contract=0.005) == Decimal(
+        '0.5'
+    )
+    for invalid in (-1, float('nan'), float('inf')):
+        with pytest.raises(ValueError, match='legacy_fee_per_contract'):
+            estimate_fee(ticker, 0.5, 100, legacy_fee_per_contract=invalid)

@@ -1,70 +1,30 @@
-"""StructuralArbStrategy -- trade deterministic structural constraint violations.
+"""Convergence trading under the assumed relation P(A) = slope*P(B) + intercept.
 
-For structural relations with a known linear constraint between two markets:
-
-    p(A) = slope x p(B) + intercept    (+/- tolerance)
-
-Example: Two markets on the same underlying with different payout
-structures, or markets with a known mathematical relationship.
-
-When market prices deviate beyond tolerance from the expected relationship,
-we trade the deviation back to the structural equilibrium.
-
-Usage:
-    oracle3 engine run \\
-      --exchange polymarket --mode paper \\
-      --strategy-ref oracle3/strategy/contrib/structural_arb_strategy.py:StructuralArbStrategy \\
-      --strategy-kwargs-json '{"market_id_a": "...", "market_id_b": "...", "slope": 1.0, "intercept": 0.0}'
+A fitted or supplied probability relationship is not a verified payoff identity.
+The basket may lose money when the relation changes or does not hold at settlement.
 """
 
 from __future__ import annotations
 
-import logging
-import time
+import math
+from collections.abc import Mapping
 from decimal import Decimal
+from typing import Any
 
-from oracle3.events.events import Event, PriceChangeEvent
-from oracle3.strategy.quant_strategy import QuantStrategy
-from oracle3.ticker.ticker import Ticker
+from oracle3.events.events import Event
+from oracle3.strategy.contrib.basket_execution import BasketExecutionStrategy
 from oracle3.trader.trader import Trader
-from oracle3.trader.types import TradeSide
-
-logger = logging.getLogger(__name__)
-
-# Flat per-side fee per contract (0.005). This is below the venues' taker
-# fees at mid prices; oracle3.fees implements the published schedules.
-_FEE_PER_SIDE = Decimal('0.005')
 
 
-class StructuralArbStrategy(QuantStrategy):
-    """Arbitrage deviations from a deterministic structural constraint.
+class StructuralArbStrategy(BasketExecutionStrategy):
+    """Trade a weighted residual; no guaranteed convergence or settlement payout.
 
-    The expected relationship is: p(A) = slope x p(B) + intercept.
-    Trade when the residual (actual - expected) exceeds min_edge.
-
-    Entry: |residual| > min_edge  (after fee buffer)
-    Exit:  |residual| < min_edge * exit_fraction
-
-    Parameters
-    ----------
-    market_id_a:
-        Market/condition identifier for outcome A.
-    market_id_b:
-        Market/condition identifier for outcome B.
-    trade_size:
-        Dollar amount per leg.
-    slope:
-        Expected linear relationship slope (default 1.0).
-    intercept:
-        Expected linear relationship intercept (default 0.0).
-    min_edge:
-        Minimum residual to trigger entry.
-    exit_fraction:
-        Exit when |residual| falls below min_edge * exit_fraction (default 0.5).
-    cooldown_seconds:
-        Minimum seconds between successive entry attempts.
-    fee_rate:
-        Per-side fee rate (default 0.005 = 0.5%).
+    ``trade_size`` is A contracts and B uses ``abs(slope)`` times that quantity.
+    ``min_edge`` applies to modeled residual after entry fees per A contract;
+    future exit fees/slippage are additional. Shared venue schedules are default;
+    ``fee_rate`` is an explicit legacy flat dollar fee per contract.
+    ``market_fee_terms`` overrides market schedules. ``yes_token_ids`` identifies
+    YES outcomes for opaque Polymarket token IDs. Unknown orders stop automation.
     """
 
     name = 'structural_arb'
@@ -81,277 +41,77 @@ class StructuralArbStrategy(QuantStrategy):
         min_edge: float = 0.02,
         exit_fraction: float = 0.5,
         cooldown_seconds: float = 120.0,
-        fee_rate: float = 0.005,
+        fee_rate: float | None = None,
+        market_fee_terms: Mapping[str, Any] | None = None,
+        yes_token_ids: Mapping[str, str] | None = None,
     ) -> None:
-        super().__init__()
-        self._id_a = market_id_a
-        self._id_b = market_id_b
-        self.trade_size = Decimal(str(trade_size))
-        self.slope = slope
-        self.intercept = intercept
-        self.min_edge = Decimal(str(min_edge))
-        self.exit_fraction = exit_fraction
-        self.cooldown_seconds = cooldown_seconds
-        self.fee_rate = Decimal(str(fee_rate))
-
-        self._price_a: Decimal | None = None
-        self._price_b: Decimal | None = None
-        # flat | long_a_short_b (A underpriced) | short_a_long_b (A overpriced)
-        self._position_state = 'flat'
-        self._last_entry_time: float = float('-inf')
-
-    # -- Ticker matching -----------------------------------------------------
-
-    @staticmethod
-    def _matches(ticker_id: str, market_id: str) -> bool:
-        if not market_id:
-            return False
-        return market_id in ticker_id or ticker_id in market_id
-
-    def _extract_ticker_id(self, ticker: Ticker) -> str:
-        return (
-            getattr(ticker, 'market_id', '')
-            or getattr(ticker, 'token_id', '')
-            or ticker.symbol
+        super().__init__(
+            market_id_a,
+            market_id_b,
+            trade_size,
+            min_edge,
+            cooldown_seconds,
+            fee_rate,
+            market_fee_terms,
+            yes_token_ids,
         )
-
-    def _find_ticker(
-        self, trader: Trader, market_id: str, *, yes: bool = True
-    ) -> Ticker | None:
-        for ticker in trader.market_data.order_books:
-            is_no = (
-                ticker.symbol.endswith('_NO')
-                or (getattr(ticker, 'name', '') or '').startswith('NO ')
-            )
-            if yes and is_no:
-                continue
-            if not yes and not is_no:
-                continue
-            tid = self._extract_ticker_id(ticker)
-            if self._matches(tid, market_id):
-                return ticker
-        return None
-
-    # -- Structural relationship ---------------------------------------------
+        if not all(math.isfinite(v) for v in (slope, intercept, exit_fraction)):
+            raise ValueError('slope, intercept and exit_fraction must be finite')
+        if not 0 <= exit_fraction <= 1:
+            raise ValueError('exit_fraction must be between zero and one')
+        self.slope, self.intercept, self.exit_fraction = slope, intercept, exit_fraction
 
     def _expected_a(self, price_b: float) -> float:
-        """Compute expected p(A) from the structural relationship."""
         return self.slope * price_b + self.intercept
 
-    # -- Core logic -----------------------------------------------------------
-
     async def process_event(self, event: Event, trader: Trader) -> None:
-        if self.is_paused() or not isinstance(event, PriceChangeEvent):
+        if not self._accept_event(event) or await self._recover_if_needed(trader):
             return
-
-        ticker = event.ticker
-        if ticker.symbol.endswith('_NO') or (
-            getattr(ticker, 'name', '') or ''
-        ).startswith('NO '):
-            return
-
-        tid = self._extract_ticker_id(ticker)
-
-        if self._matches(tid, self._id_a):
-            self._price_a = event.price
-        elif self._matches(tid, self._id_b):
-            self._price_b = event.price
-        else:
-            return
-
-        if self._price_a is None or self._price_b is None:
-            return
-
+        assert self._price_a is not None and self._price_b is not None
         pa = float(self._price_a)
-        pb = float(self._price_b)
-        expected = self._expected_a(pb)
-        residual = pa - expected  # positive = A overpriced
-
+        expected = self._expected_a(float(self._price_b))
+        residual = pa - expected
         if self._position_state == 'flat':
             if residual > float(self.min_edge):
-                now = time.monotonic()
-                if now - self._last_entry_time < self.cooldown_seconds:
-                    return
-                self._last_entry_time = now
                 await self._enter_short_a(trader, pa, expected, residual)
             elif residual < -float(self.min_edge):
-                now = time.monotonic()
-                if now - self._last_entry_time < self.cooldown_seconds:
-                    return
-                self._last_entry_time = now
                 await self._enter_long_a(trader, pa, expected, residual)
             else:
-                self.record_decision(
-                    ticker_name=f'struc({self._id_a[:10]}|{self._id_b[:10]})',
-                    action='HOLD',
-                    executed=False,
-                    reasoning=(
-                        f'A={pa:.4f} expected={expected:.4f} '
-                        f'residual={residual:.4f} '
-                        f'within +/-{float(self.min_edge):.4f}'
-                    ),
-                    signal_values={
-                        'price_a': pa, 'price_b': pb,
-                        'expected': expected, 'residual': residual,
-                    },
+                self._hold(
+                    'Residual is within the assumed convergence band',
+                    residual=residual,
+                    expected=expected,
                 )
-        else:
-            # Exit when residual converges toward zero
-            exit_threshold = float(self.min_edge) * self.exit_fraction
-            if abs(residual) < exit_threshold:
-                await self._exit(trader, residual)
+        elif abs(residual) <= float(self.min_edge) * self.exit_fraction:
+            await self._exit(trader, residual)
 
     async def _enter_short_a(
-        self, trader: Trader, pa: float, expected: float, residual: float,
+        self, trader: Trader, pa: float, expected: float, residual: float
     ) -> None:
-        """A overpriced -> sell A (buy NO), buy B (buy YES)."""
-        ticker_a_no = self._find_ticker(trader, self._id_a, yes=False)
-        ticker_b = self._find_ticker(trader, self._id_b, yes=True)
-
-        executed_legs = 0
-
-        if ticker_a_no and self._price_a is not None:
-            try:
-                result = await trader.place_order(
-                    side=TradeSide.BUY, ticker=ticker_a_no,
-                    limit_price=Decimal('1') - self._price_a,
-                    quantity=self.trade_size,
-                )
-                if not result.failure_reason:
-                    executed_legs += 1
-                else:
-                    logger.warning(
-                        'Structural arb leg A_NO failed: %s', result.failure_reason
-                    )
-            except Exception:
-                logger.exception('Error placing structural arb leg A_NO')
-
-        if ticker_b and self._price_b is not None:
-            try:
-                result = await trader.place_order(
-                    side=TradeSide.BUY, ticker=ticker_b,
-                    limit_price=self._price_b, quantity=self.trade_size,
-                )
-                if not result.failure_reason:
-                    executed_legs += 1
-                else:
-                    logger.warning(
-                        'Structural arb leg B failed: %s', result.failure_reason
-                    )
-            except Exception:
-                logger.exception('Error placing structural arb leg B')
-
-        if executed_legs > 0:
-            self._position_state = 'short_a_long_b'
-        self.record_decision(
-            ticker_name=f'struc({self._id_a[:10]}|{self._id_b[:10]})',
-            action='ENTER_SHORT_A',
-            executed=executed_legs > 0,
-            reasoning=(
-                f'A={pa:.4f} > expected={expected:.4f}, '
-                f'residual={residual:.4f}  legs={executed_legs}/2'
-            ),
-            signal_values={
-                'price_a': pa, 'price_b': float(self._price_b or 0),
-                'expected': expected, 'residual': residual,
-                'executed_legs': executed_legs,
-            },
-        )
-        logger.info(
-            'ENTER structural arb: A overpriced, residual=%.4f', residual
+        slope, intercept = Decimal(str(self.slope)), Decimal(str(self.intercept))
+        reference = Decimal('1') - intercept + max(-slope, Decimal('0'))
+        await self._enter_basket(
+            trader,
+            [(self._id_a, False, Decimal('1')), (self._id_b, slope >= 0, abs(slope))],
+            reference,
+            'short_a_long_b' if slope >= 0 else 'short_both',
+            'ENTER_SHORT_A',
+            model_dependent=True,
         )
 
     async def _enter_long_a(
-        self, trader: Trader, pa: float, expected: float, residual: float,
+        self, trader: Trader, pa: float, expected: float, residual: float
     ) -> None:
-        """A underpriced -> buy A (buy YES), sell B (buy NO)."""
-        ticker_a = self._find_ticker(trader, self._id_a, yes=True)
-        ticker_b_no = self._find_ticker(trader, self._id_b, yes=False)
-
-        executed_legs = 0
-
-        if ticker_a and self._price_a is not None:
-            try:
-                result = await trader.place_order(
-                    side=TradeSide.BUY, ticker=ticker_a,
-                    limit_price=self._price_a, quantity=self.trade_size,
-                )
-                if not result.failure_reason:
-                    executed_legs += 1
-                else:
-                    logger.warning(
-                        'Structural arb leg A failed: %s', result.failure_reason
-                    )
-            except Exception:
-                logger.exception('Error placing structural arb leg A')
-
-        if ticker_b_no and self._price_b is not None:
-            try:
-                result = await trader.place_order(
-                    side=TradeSide.BUY, ticker=ticker_b_no,
-                    limit_price=Decimal('1') - self._price_b,
-                    quantity=self.trade_size,
-                )
-                if not result.failure_reason:
-                    executed_legs += 1
-                else:
-                    logger.warning(
-                        'Structural arb leg B_NO failed: %s', result.failure_reason
-                    )
-            except Exception:
-                logger.exception('Error placing structural arb leg B_NO')
-
-        if executed_legs > 0:
-            self._position_state = 'long_a_short_b'
-        self.record_decision(
-            ticker_name=f'struc({self._id_a[:10]}|{self._id_b[:10]})',
-            action='ENTER_LONG_A',
-            executed=executed_legs > 0,
-            reasoning=(
-                f'A={pa:.4f} < expected={expected:.4f}, '
-                f'residual={residual:.4f}  legs={executed_legs}/2'
-            ),
-            signal_values={
-                'price_a': pa, 'price_b': float(self._price_b or 0),
-                'expected': expected, 'residual': residual,
-                'executed_legs': executed_legs,
-            },
-        )
-        logger.info(
-            'ENTER structural arb: A underpriced, residual=%.4f', residual
+        slope, intercept = Decimal(str(self.slope)), Decimal(str(self.intercept))
+        reference = intercept + max(slope, Decimal('0'))
+        await self._enter_basket(
+            trader,
+            [(self._id_a, True, Decimal('1')), (self._id_b, slope < 0, abs(slope))],
+            reference,
+            'long_a_short_b' if slope >= 0 else 'long_both',
+            'ENTER_LONG_A',
+            model_dependent=True,
         )
 
     async def _exit(self, trader: Trader, residual: float) -> None:
-        """Close all positions -- residual has converged."""
-        executed_legs = 0
-        for pos in trader.position_manager.positions.values():
-            if pos.quantity > 0:
-                best_bid = trader.market_data.get_best_bid(pos.ticker)
-                if best_bid:
-                    try:
-                        result = await trader.place_order(
-                            side=TradeSide.SELL, ticker=pos.ticker,
-                            limit_price=best_bid.price, quantity=pos.quantity,
-                        )
-                        if not result.failure_reason:
-                            executed_legs += 1
-                    except Exception:
-                        logger.exception(
-                            'Error closing structural arb leg: %s',
-                            pos.ticker.symbol,
-                        )
-
-        prev = self._position_state
-        self._position_state = 'flat'
-        self.record_decision(
-            ticker_name=f'struc({self._id_a[:10]}|{self._id_b[:10]})',
-            action='EXIT',
-            executed=executed_legs > 0,
-            reasoning=f'Residual converged: {residual:.4f} (was {prev})',
-            signal_values={
-                'price_a': float(self._price_a or 0),
-                'price_b': float(self._price_b or 0),
-                'residual': residual,
-            },
-        )
-        logger.info('EXIT structural arb: residual converged')
+        await self._close_owned(trader)

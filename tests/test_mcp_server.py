@@ -395,6 +395,114 @@ async def test_paper_order_respects_limit_and_reset_needs_confirmation():
     assert (await call('paper_reset', confirm=True))['cash'] == 10_000
 
 
+@pytest.mark.parametrize(
+    'field,value',
+    [
+        ('contracts', 'NaN'),
+        ('contracts', 'Infinity'),
+        ('contracts', '-Infinity'),
+        ('contracts', 0),
+        ('contracts', -1),
+        ('limit_price', 'NaN'),
+        ('limit_price', 'Infinity'),
+        ('limit_price', 1),
+        ('market_id', '  '),
+        ('request_id', '  '),
+    ],
+)
+@pytest.mark.asyncio
+async def test_invalid_paper_dispatch_does_not_contact_venues_or_write(
+    tmp_path, field, value
+):
+    requests = []
+
+    def no_http(request):
+        requests.append(request)
+        return httpx.Response(500)
+
+    venues.set_transport(httpx.MockTransport(no_http))
+    arguments = {
+        'venue': 'polymarket',
+        'market_id': '2589812',
+        'side': 'yes',
+        'contracts': 1,
+        'limit_price': 0.7,
+        field: value,
+    }
+    with pytest.raises(Exception, match='finite|positive|between|nonblank'):
+        await call('paper_order', **arguments)
+    assert requests == []
+    assert not (tmp_path / 'ledger.json').exists()
+
+
+@pytest.mark.asyncio
+async def test_paper_dispatch_retry_and_conflict_skip_http():
+    arguments = {
+        'venue': 'polymarket',
+        'market_id': '2589812',
+        'side': 'yes',
+        'contracts': 1,
+        'limit_price': 0.7,
+        'request_id': 'retry-this-order',
+    }
+    first = await call('paper_order', **arguments)
+    requests = []
+
+    def no_http(request):
+        requests.append(request)
+        return httpx.Response(500)
+
+    venues.set_transport(httpx.MockTransport(no_http))
+    assert await call('paper_order', **arguments) == first
+    with pytest.raises(Exception, match='different paper order'):
+        await call('paper_order', **{**arguments, 'contracts': 2})
+    assert requests == []
+    assert (await call('paper_portfolio'))['fills'] == 1
+
+
+@pytest.mark.parametrize(
+    'venue,field,value',
+    [
+        ('kalshi', 'kalshi_multiplier', 'NaN'),
+        ('kalshi', 'kalshi_multiplier', 'Infinity'),
+        ('kalshi', 'kalshi_multiplier', -1),
+        ('polymarket', 'polymarket_rate', 'NaN'),
+        ('polymarket', 'polymarket_rate', 'Infinity'),
+        ('polymarket', 'polymarket_rate', -0.1),
+    ],
+)
+@pytest.mark.asyncio
+async def test_fee_dispatch_rejects_invalid_schedule_inputs(venue, field, value):
+    with pytest.raises(Exception, match='finite|nonnegative'):
+        await call('trading_fee', venue=venue, price=0.5, contracts=1, **{field: value})
+
+
+@pytest.mark.asyncio
+async def test_corrupt_ledger_is_a_readable_tool_error_without_http(tmp_path):
+    path = tmp_path / 'ledger.json'
+    path.write_text('{"cash":NaN}')
+    requests = []
+
+    def no_http(request):
+        requests.append(request)
+        return httpx.Response(500)
+
+    venues.set_transport(httpx.MockTransport(no_http))
+    with pytest.raises(Exception, match='Invalid paper ledger.*preserved'):
+        await call(
+            'paper_order',
+            venue='polymarket',
+            market_id='2589812',
+            side='yes',
+            contracts=1,
+            limit_price=0.7,
+        )
+    with pytest.raises(Exception, match='Invalid paper ledger.*preserved'):
+        await call('paper_reset', confirm=True)
+    assert path.read_text() == '{"cash":NaN}'
+    assert requests == []
+
+
 async def test_venue_errors_surface_as_tool_errors():
     # The venue's message must reach the agent under both SDK versions.
     with pytest.raises(Exception, match='HTTP 404'):

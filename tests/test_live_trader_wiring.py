@@ -94,6 +94,7 @@ async def test_run_live_polymarket_trading_restores_missing_cash(monkeypatch):
         data_source=object(),
         strategy=object(),
         wallet_private_key='dummy',
+        funder='0x0000000000000000000000000000000000000001',
         signature_type=0,
         risk_manager=NoRiskManager(),
         state_store=FakeStore(),

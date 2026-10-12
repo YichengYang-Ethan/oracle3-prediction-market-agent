@@ -55,6 +55,16 @@ jobs:
       - name: List built artifacts
         run: ls -la dist/
 
+      - name: Verify installed wheel before publishing
+        run: |
+          python -m venv "$RUNNER_TEMP/oracle3-release-wheel"
+          wheel_python="$RUNNER_TEMP/oracle3-release-wheel/bin/python"
+          "$wheel_python" -m pip install "$GITHUB_WORKSPACE"/dist/*.whl
+          "$wheel_python" -m pip check
+          cp scripts/check_installed_mcp.py "$RUNNER_TEMP/check_installed_mcp.py"
+          cd "$RUNNER_TEMP"
+          "$wheel_python" check_installed_mcp.py --wheel "$GITHUB_WORKSPACE"/dist/*.whl
+
       - name: Publish to PyPI (trusted publishing)
         uses: pypa/gh-action-pypi-publish@release/v1
 

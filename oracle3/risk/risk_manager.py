@@ -196,6 +196,21 @@ class StandardRiskManager(RiskManager):
         Returns:
             True if the trade is allowed, False otherwise
         """
+        if (
+            not isinstance(side, TradeSide)
+            or not quantity.is_finite()
+            or not price.is_finite()
+            or quantity <= 0
+            or price < 0
+        ):
+            return False
+        # Incomplete valuation must never create apparent buying capacity.
+        if side == TradeSide.BUY and self.position_manager.get_missing_marks(
+            self.market_data
+        ):
+            logger.warning('Risk check failed: held inventory has missing market marks')
+            return False
+
         # Skip risk checks for cash tickers
         if isinstance(ticker, CashTicker):
             return True

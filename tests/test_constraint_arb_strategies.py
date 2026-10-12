@@ -47,7 +47,7 @@ def _make_ticker(
 ) -> PolyMarketTicker:
     return PolyMarketTicker(
         symbol=symbol,
-        name=name or symbol,
+        name=name or f'YES {symbol}',
         token_id=symbol,
         market_id=market_id or symbol,
         event_id=event_id,
@@ -126,7 +126,7 @@ class TestExclusivityArbDefaults:
         assert s.trade_size == Decimal('10')
         assert s.min_edge == Decimal('0.02')
         assert s.cooldown_seconds == 120.0
-        assert s.fee_rate == Decimal('0.005')
+        assert s.fee_rate is None
         assert s._position_state == 'flat'
         assert s._price_a is None
         assert s._price_b is None
@@ -490,7 +490,7 @@ class TestConditionalArbViolation:
 
     async def test_a_within_band_holds(self):
         ticker_a = _make_ticker('A', market_id='mkt_a')
-        ticker_b = _make_ticker('B', market_id='mkt_b')
+        ticker_b = _make_ticker('B', market_id='mkt_b', no_token_id='B_NO')
         s = ConditionalArbStrategy(
             market_id_a='mkt_a', market_id_b='mkt_b',
             cond_lower=0.4, cond_upper=0.9,
@@ -506,7 +506,7 @@ class TestConditionalArbViolation:
     async def test_a_too_high_enters_short_a(self):
         ticker_a = _make_ticker('A', market_id='mkt_a', no_token_id='A_NO')
         ticker_a_no = ticker_a.get_no_ticker()
-        ticker_b = _make_ticker('B', market_id='mkt_b')
+        ticker_b = _make_ticker('B', market_id='mkt_b', no_token_id='B_NO')
         s = ConditionalArbStrategy(
             market_id_a='mkt_a', market_id_b='mkt_b',
             cond_lower=0.4, cond_upper=0.6,
@@ -514,13 +514,16 @@ class TestConditionalArbViolation:
         )
         trader = _make_trader()
         _seed_order_book(trader, ticker_a, Decimal('0.55'), Decimal('0.65'))
-        _seed_order_book(trader, ticker_a_no, Decimal('0.35'), Decimal('0.45'))
+        _seed_order_book(trader, ticker_a_no, Decimal('0.04'), Decimal('0.06'))
         _seed_order_book(trader, ticker_b, Decimal('0.45'), Decimal('0.55'))
+        _seed_order_book(
+            trader, ticker_b.get_no_ticker(), Decimal('0.45'), Decimal('0.55')
+        )
 
         # B=0.5 => band=[0.20, 0.80], A=0.95 > upper+edge
         await s.process_event(_price_event(ticker_b, Decimal('0.50')), trader)
         await s.process_event(_price_event(ticker_a, Decimal('0.95')), trader)
-        assert s._position_state == 'short_a_long_b'
+        assert s._position_state == 'short_both'
 
     async def test_a_too_low_enters_long_a(self):
         ticker_a = _make_ticker('A', market_id='mkt_a')
@@ -544,7 +547,7 @@ class TestConditionalArbViolation:
     async def test_exit_when_a_returns_to_band(self):
         ticker_a = _make_ticker('A', market_id='mkt_a', no_token_id='A_NO')
         ticker_a_no = ticker_a.get_no_ticker()
-        ticker_b = _make_ticker('B', market_id='mkt_b')
+        ticker_b = _make_ticker('B', market_id='mkt_b', no_token_id='B_NO')
         s = ConditionalArbStrategy(
             market_id_a='mkt_a', market_id_b='mkt_b',
             cond_lower=0.4, cond_upper=0.6,
@@ -553,13 +556,16 @@ class TestConditionalArbViolation:
         )
         trader = _make_trader()
         _seed_order_book(trader, ticker_a, Decimal('0.55'), Decimal('0.65'))
-        _seed_order_book(trader, ticker_a_no, Decimal('0.35'), Decimal('0.45'))
+        _seed_order_book(trader, ticker_a_no, Decimal('0.04'), Decimal('0.06'))
         _seed_order_book(trader, ticker_b, Decimal('0.45'), Decimal('0.55'))
+        _seed_order_book(
+            trader, ticker_b.get_no_ticker(), Decimal('0.45'), Decimal('0.55')
+        )
 
         # Enter: B=0.5 band=[0.20, 0.80], A=0.95 > upper
         await s.process_event(_price_event(ticker_b, Decimal('0.50')), trader)
         await s.process_event(_price_event(ticker_a, Decimal('0.95')), trader)
-        assert s._position_state == 'short_a_long_b'
+        assert s._position_state == 'short_both'
 
         # Exit: A=0.50 in [0.20, 0.80]
         await s.process_event(_price_event(ticker_a, Decimal('0.50')), trader)
@@ -967,7 +973,7 @@ class TestStructuralArbViolation:
         )
         trader = _make_trader()
         _seed_order_book(trader, ticker_a, Decimal('0.55'), Decimal('0.75'))
-        _seed_order_book(trader, ticker_a_no, Decimal('0.25'), Decimal('0.45'))
+        _seed_order_book(trader, ticker_a_no, Decimal('0.25'), Decimal('0.30'))
         _seed_order_book(trader, ticker_b, Decimal('0.45'), Decimal('0.55'))
 
         # Enter: residual = 0.70 - 0.50 = 0.20 > 0.05

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
@@ -21,7 +22,7 @@ from oracle3.events.events import (
 )
 from oracle3.risk.risk_manager import StandardRiskManager
 from oracle3.strategy.strategy import Strategy
-from oracle3.ticker.ticker import CashTicker
+from oracle3.ticker.ticker import CashTicker, Ticker
 from oracle3.trader.trader import Trader
 from oracle3.trader.types import OrderStatus
 
@@ -78,6 +79,8 @@ class OrderSnapshot:
     quantity: Decimal
     filled_quantity: Decimal
     status: str
+    venue_order_id: str = ''
+    client_order_id: str = ''
 
 
 @dataclass(frozen=True)
@@ -105,6 +108,11 @@ class EngineSnapshot:
     recent_trades: list[TradeSnapshot]
     active_orders: list[OrderSnapshot]
     news_headlines: list[dict[str, str]]  # [{timestamp,title,source,url}, ...]
+    valuation_complete: bool = True
+    missing_marks: tuple[str, ...] = ()
+    sharpe_available: bool = False
+    reconciliation_required: bool = False
+    reconciliation_reason: str = ''
 
 
 # ---------------------------------------------------------------------------
@@ -150,9 +158,15 @@ class TradingEngine:
         # --- monitoring helpers ---
         self._start_time: datetime | None = None
         self._event_count: int = 0
-        self._last_orders_idx: int = 0
+        self._last_orders_idx: int = len(trader.orders)
+        self._last_order_trade_idx = 0
+        self._checkpoint_dirty = False
         self._order_times: list[str] = []
-        self._perf = PerformanceAnalyzer(initial_capital=initial_capital)
+        self._perf = self._initialize_performance(initial_capital)
+        self._event_timestamp: int | None = None
+        self._reconciliation_blocked = False
+        self._last_reconciliation_poll = float('-inf')
+        self._last_mark_signature: tuple | None = None
         self._news: deque[dict[str, str]] = deque(maxlen=300)
         self._activity_log: deque[tuple[str, str]] = deque(maxlen=100)
         self._last_decisions_count: int = 0
@@ -177,6 +191,88 @@ class TradingEngine:
         # Flash loan and atomic trader instances (optional, set externally)
         self._flash_loan: Any | None = None
         self._atomic_trader: Any | None = None
+
+    def _initialize_performance(self, initial_capital: Decimal) -> PerformanceAnalyzer:
+        pm = self.trader.position_manager
+        cash_positions = pm.get_cash_positions()
+        cash = sum((p.quantity for p in cash_positions), Decimal('0'))
+        positions = [p for p in pm.get_non_cash_positions() if p.quantity != 0]
+        restored = self._state_store.load_performance() if self._state_store else None
+        if restored is not None:
+            held = {p.ticker: p.quantity for p in positions}
+            tracked = {t.ticker for t in restored.trades} | set(held)
+            # Marks include seeded holdings which may not have any fill records.
+            tracked.update(restored.inventory_tickers())
+            if restored.cash != cash or any(
+                restored.position_quantity(t) != held.get(t, Decimal('0'))
+                for t in tracked
+            ):
+                raise ValueError(
+                    'Saved accounting and account positions differ; reconcile before restart'
+                )
+            return restored
+        if cash_positions or positions:
+            initial_capital = cash + sum(
+                (p.quantity * p.average_cost for p in positions), Decimal('0')
+            )
+        perf = PerformanceAnalyzer(initial_capital=initial_capital)
+        for pos in positions:
+            perf.seed_position(pos.ticker, pos.quantity, pos.average_cost)
+        if positions:
+            logger.warning(
+                'No accounting checkpoint: opening holdings establish a new session cost baseline'
+            )
+        return perf
+
+    def _mark_performance(self) -> None:
+        prices: dict[Ticker, Decimal] = {}
+        for ticker in self._perf.inventory_tickers():
+            bid = self.market_data.get_best_bid(ticker)
+            ask = self.market_data.get_best_ask(ticker) if bid is None else None
+            level = bid if bid is not None else ask
+            if level is not None:
+                prices[ticker] = level.price
+        signature = (
+            self._event_timestamp,
+            self._perf.cash,
+            frozenset(
+                (t, self._perf.position_quantity(t))
+                for t in self._perf.inventory_tickers()
+            ),
+            frozenset(prices.items()),
+        )
+        if signature != self._last_mark_signature:
+            self._perf.mark_to_market(prices, timestamp=self._event_timestamp)
+            self._last_mark_signature = signature
+
+    async def _reconcile_orders(self) -> bool:
+        """Poll pending orders even with no market events; never guess fills."""
+        try:
+            now = time.monotonic()
+            if now - self._last_reconciliation_poll >= 1:
+                self._last_reconciliation_poll = now
+                await self.trader.reconcile_pending_orders()
+                self._reconciliation_blocked = False
+            await self._sync_trades()
+            blocked = (
+                self._reconciliation_blocked or self.trader.reconciliation_required
+            )
+        except Exception:
+            logger.exception(
+                'Order reconciliation failed; strategy execution suspended'
+            )
+            blocked = True
+        if blocked != self._reconciliation_blocked:
+            self._activity_log.append(
+                (
+                    datetime.now().strftime('%H:%M:%S'),
+                    'Order reconciliation required'
+                    if blocked
+                    else 'Order reconciliation complete',
+                )
+            )
+        self._reconciliation_blocked = blocked
+        return not blocked
 
     def _drain_backtest_timestamp_batch(self, event: Event) -> list[Event]:
         """Return all queued backtest events that share a timestamp."""
@@ -226,18 +322,34 @@ class TradingEngine:
     ) -> None:
         self._event_count += 1
         self._log_event_milestone()
+        timestamp = getattr(event, 'timestamp', None)
+        self._event_timestamp = (
+            int(timestamp.timestamp()) if isinstance(timestamp, datetime) else None
+        )
 
         try:
             now_str = datetime.now().strftime('%H:%M:%S')
 
             if not market_data_already_applied:
                 self._apply_market_event(event)
+            self._mark_performance()
+            if not await self._reconcile_orders():
+                self._mark_performance()
+                return
 
             if isinstance(event, OnChainSignalEvent):
                 self._activity_log.append(
-                    (now_str, f'OnChainSignal: {event.signal_type} {event.direction} {event.amount} ({event.wallet[:8]}...)')
+                    (
+                        now_str,
+                        f'OnChainSignal: {event.signal_type} {event.direction} {event.amount} ({event.wallet[:8]}...)',
+                    )
                 )
-                logger.info('OnChainSignalEvent: %s %s %s', event.signal_type, event.direction, event.amount)
+                logger.info(
+                    'OnChainSignalEvent: %s %s %s',
+                    event.signal_type,
+                    event.direction,
+                    event.amount,
+                )
 
             if isinstance(event, NewsEvent):
                 headline = event.title or event.news[:100]
@@ -279,7 +391,9 @@ class TradingEngine:
                     signal_pairs = list(signals.items())[:2]
                     signal_str = (
                         ' '.join(
-                            f'{k}={v:.3f}' if isinstance(v, (int, float)) else f'{k}={v}'
+                            f'{k}={v:.3f}'
+                            if isinstance(v, (int, float))
+                            else f'{k}={v}'
                             for k, v in signal_pairs
                         )
                         if signal_pairs
@@ -292,6 +406,7 @@ class TradingEngine:
                 self._last_decisions_count = total_d
 
             await self._sync_trades()
+            self._mark_performance()
             await self._maybe_write_reputation()
             new_orders = self.trader.orders[prev_orders:]
             for order in new_orders:
@@ -394,6 +509,8 @@ class TradingEngine:
         while self.running:
             # [D1] When data flow is paused, sleep instead of polling the source.
             if self._data_paused:
+                await self._reconcile_orders()
+                self._mark_performance()
                 await asyncio.sleep(0.5)
                 continue
 
@@ -406,10 +523,13 @@ class TradingEngine:
                 continue
 
             if event is None:
+                await self._reconcile_orders()
+                self._mark_performance()
                 # [P1] Process deferred news when the queue is idle.
                 if self._deferred_news:
                     event = self._deferred_news.popleft()
                 elif self._continuous:
+                    await asyncio.sleep(0.1)
                     consecutive_none += 1
                     # [M1] Warn periodically on prolonged silence.
                     if consecutive_none == _MAX_CONSECUTIVE_NONE:
@@ -478,6 +598,8 @@ class TradingEngine:
                 )
 
         logger.info('TradingEngine stopped  (events=%d)', self._event_count)
+        if self._state_store:
+            self._state_store.save_all(self.trader.position_manager, self._perf)
 
     async def stop(self) -> None:
         """Stop the engine **and** its data source (async-safe)."""
@@ -521,9 +643,14 @@ class TradingEngine:
         now_str = datetime.now().strftime('%H:%M:%S')
         while self._last_orders_idx < len(orders):
             order = orders[self._last_orders_idx]
-            self._order_times.append(now_str)
-            for trade in order.trades:
-                self._perf.add_trade(trade)
+            if self._last_order_trade_idx == 0:
+                self._order_times.append(now_str)
+            while self._last_order_trade_idx < len(order.trades):
+                trade = order.trades[self._last_order_trade_idx]
+                self._perf.add_trade(trade, timestamp=self._event_timestamp)
+                # Advance before any await: cancellation must not replay this fill.
+                self._last_order_trade_idx += 1
+                self._checkpoint_dirty = True
                 if self._state_store:
                     try:
                         self._state_store.append_trade(trade)
@@ -543,6 +670,10 @@ class TradingEngine:
                 except Exception:
                     logger.debug('state_store.append_order() failed', exc_info=True)
             self._last_orders_idx += 1
+            self._last_order_trade_idx = 0
+        if self._state_store and self._checkpoint_dirty:
+            self._state_store.save_all(self.trader.position_manager, self._perf)
+            self._checkpoint_dirty = False
 
     async def _maybe_write_reputation(self) -> None:
         """Write reputation summary if the manager is set and interval reached."""
@@ -640,41 +771,13 @@ class TradingEngine:
         md = self.trader.market_data
         rm = self.trader.risk_manager
 
-        # ---- equity / pnl -----------------------------------------------
-        realized_pnl = pm.get_total_realized_pnl()
-        unrealized_pnl = Decimal('0')
-        cash = Decimal('0')
-        equity = Decimal('0')
-
-        for cp in pm.get_cash_positions():
-            cash += cp.quantity
-
-        for pos in pm.get_non_cash_positions():
-            if pos.quantity <= 0:
-                continue
-            try:
-                cur_price = None
-                bid = md.get_best_bid(pos.ticker)
-                if bid is not None:
-                    cur_price = bid.price
-                else:
-                    ask = md.get_best_ask(pos.ticker)
-                    if ask is not None:
-                        cur_price = ask.price
-                if cur_price is not None:
-                    unrealized_pnl += (cur_price - pos.average_cost) * pos.quantity
-            except (KeyError, AttributeError):
-                pass
-
-        try:
-            equity = sum(pm.get_portfolio_value(md).values(), Decimal('0'))
-        except (KeyError, AttributeError):
-            equity = cash
-
-        total_pnl = realized_pnl + unrealized_pnl
-
-        # ---- sharpe / drawdown from perf analyser -----------------------
+        # One accounting source: cash + marked inventory, with explicit missing marks.
         stats = self._perf.get_stats()
+        cash = stats.cash
+        equity = cash + stats.inventory_value
+        realized_pnl = stats.realized_pnl
+        unrealized_pnl = stats.unrealized_pnl
+        total_pnl = stats.total_pnl
         sharpe = stats.sharpe_ratio
         max_dd = stats.max_drawdown
 
@@ -695,7 +798,7 @@ class TradingEngine:
         for pos in pm.get_non_cash_positions():
             if pos.quantity <= 0:
                 continue
-            cur_price = Decimal('0')
+            cur_price = pos.average_cost
             u_pnl = Decimal('0')
             try:
                 bid = md.get_best_bid(pos.ticker)
@@ -705,8 +808,7 @@ class TradingEngine:
                     ask = md.get_best_ask(pos.ticker)
                     if ask is not None:
                         cur_price = ask.price
-                if cur_price > 0:
-                    u_pnl = (cur_price - pos.average_cost) * pos.quantity
+                u_pnl = (cur_price - pos.average_cost) * pos.quantity
             except (KeyError, AttributeError):
                 pass
             pos_snaps.append(
@@ -778,7 +880,15 @@ class TradingEngine:
                         status=status_str,
                     )
                 )
-            if order.status == OrderStatus.PLACED:
+            if (
+                order.status
+                in (
+                    OrderStatus.PLACED,
+                    OrderStatus.PARTIALLY_FILLED,
+                    OrderStatus.UNKNOWN,
+                )
+                or order.execution_uncertain
+            ):
                 active_snaps.append(
                     OrderSnapshot(
                         side=side_str,
@@ -791,6 +901,32 @@ class TradingEngine:
                         status=status_str,
                     )
                 )
+
+        # Live order history contains accounting deltas, not pending intents.
+        journal = getattr(self.trader, 'order_journal', None)
+        if journal is not None:
+            active_snaps = []
+            try:
+                for row in journal.records(pending_only=True):
+                    request = row['request']
+                    observed = row.get('result') or {}
+                    active_snaps.append(
+                        OrderSnapshot(
+                            side=request['side'],
+                            ticker_symbol=request['ticker']['symbol'],
+                            ticker_name=request['ticker'].get('name', ''),
+                            limit_price=Decimal(request['limit_price']),
+                            quantity=Decimal(request['quantity']),
+                            filled_quantity=Decimal(
+                                observed.get('filled_quantity', '0')
+                            ),
+                            status=observed.get('status', 'unknown'),
+                            venue_order_id=row['venue_order_id'],
+                            client_order_id=row['client_order_id'],
+                        )
+                    )
+            except Exception:
+                logger.exception('Cannot display pending order journal')
 
         # ---- uptime -----------------------------------------------------
         uptime = '00:00:00'
@@ -819,4 +955,16 @@ class TradingEngine:
             recent_trades=trade_snaps[:10],
             active_orders=active_snaps,
             news_headlines=list(self._news),
+            valuation_complete=stats.valuation_complete,
+            missing_marks=stats.missing_marks,
+            sharpe_available=stats.sharpe_available,
+            reconciliation_required=self._reconciliation_blocked
+            or self.trader.reconciliation_required,
+            reconciliation_reason=self.trader.reconciliation_reason
+            if self.trader.reconciliation_required
+            else (
+                'checkpoint or venue reconciliation failed'
+                if self._reconciliation_blocked
+                else ''
+            ),
         )

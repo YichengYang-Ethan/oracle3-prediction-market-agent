@@ -25,8 +25,9 @@ or 1 if any case fails. To save the report:
 .venv/bin/python scripts/check_agent_contracts.py --output /tmp/oracle3-contracts.json
 ```
 
-The output records the Oracle3 and MCP versions, fixed case IDs, pass/fail status,
-and structured evidence. It has no timestamps or random inputs. Repeated runs
+The output records Oracle3/MCP and installed dependency versions, source Git
+revision and dirty status, a source-content fingerprint, fixed case IDs, pass/fail
+status, and structured evidence. It has no timestamps or random inputs. Repeated runs
 with the same code and dependencies produce the same JSON. MCP error wording can
 differ between SDK versions; compare case IDs and behavioral outcomes across
 versions rather than expecting byte-identical reports.
@@ -43,7 +44,7 @@ versions rather than expecting byte-identical reports.
 | `execution.exact_full_fill` | Recognize two terminal fills for their full requested quantities. |
 | `execution.partial_fill_is_incomplete` | Reject basket success for a terminal partial fill; report the exact remaining exposure. |
 | `execution.failed_unwind_keeps_exposure` | Report an unsuccessful reverse order and retained exposure without claiming a hedge. |
-| `execution.open_remainder_requires_reconciliation` | Preserve uncertainty about an open remainder even after known fills are reversed. |
+| `execution.open_remainder_requires_reconciliation` | Preserve known residuals and skip automatic unwind while an order may still fill. |
 
 The relation case deliberately supplies an incomplete outcome set while labeling
 it `event_sum`. The price checker cannot discover an omitted outcome from those
@@ -90,7 +91,8 @@ signed `residual_exposures`, `execution_uncertain`, and
 `requires_reconciliation`. Residuals describe this attempt, not total account
 positions. An empty residual list with uncertain execution still requires venue
 reconciliation: an outstanding order could fill later. The executor does not
-cancel orders or infer finality after an adapter exception.
+cancel orders or infer finality after an adapter exception. Uncertain execution
+skips automatic unwind; confirmed terminal partial fills may attempt recovery.
 This in-memory helper does not provide durable recovery after process loss or
 coroutine cancellation; those interruptions require independent reconciliation.
 
@@ -134,3 +136,10 @@ out-of-range quotes, blank market identities, and duplicate contracts. Equal
 IDs on different venues are distinct. The additive `assessment` object exposes
 that rules and execution have not been verified; a positive conditional edge
 must not be interpreted as an unconditional trade instruction.
+
+## Runtime and installed-package checks
+
+See [runtime integrity and migration](runtime-integrity.md) for accounting
+semantics, order journaling, retry behavior, strategy ownership and recovery
+limits. CI additionally builds and installs a wheel outside the checkout and
+checks a real MCP stdio session on supported SDK 1.x and 2.x versions.

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass
+from decimal import Decimal
 from typing import Any
 
 from oracle3.strategy.strategy import Strategy, StrategyContext
+from oracle3.trader.spread_executor import SpreadExecutor, SpreadLeg, SpreadOrderResult
+from oracle3.trader.types import TradeSide
 
 
 def _import_agents_sdk():
@@ -17,19 +21,38 @@ def _import_agents_sdk():
     return Agent, Runner, function_tool
 
 
-@dataclass
+@dataclass(frozen=True)
 class TradeRequest:
     """A trade request queued by the agent's place_trade tool.
 
-    Stored during the agent run and executed by the strategy after the run
-    completes, since ``trader.place_order`` is async and cannot be called
-    from inside a synchronous ``function_tool``.
+    Stored during the agent run. The strategy must explicitly consume the
+    request and report an order outcome; accepting it does not execute it.
     """
 
     symbol: str
     side: str  # 'buy' or 'sell'
     quantity: float
     limit_price: float
+
+
+@dataclass(frozen=True)
+class AgentTradeOutcome:
+    """Observed outcome of one queued request, including unsubmitted requests."""
+
+    request: TradeRequest
+    execution: SpreadOrderResult
+
+    @property
+    def executed(self) -> bool:
+        # No unwind is requested: residuals are the known fills of this attempt.
+        return self.execution.success or bool(self.execution.residual_exposures)
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            'request': asdict(self.request),
+            'executed': self.executed,
+            'execution': self.execution.to_payload(),
+        }
 
 
 class AgentStrategy(Strategy):
@@ -132,10 +155,12 @@ class AgentStrategy(Strategy):
         ctx = context or self.require_context()
         _Agent, _Runner, function_tool = _import_agents_sdk()
 
-        # Mutable list shared with the place_trade tool; the strategy reads
-        # it after the agent run completes and executes the queued trades.
-        pending_trades: list[TradeRequest] = []
-        self._pending_trades = pending_trades
+        if getattr(self, '_pending_trades', []):
+            raise RuntimeError(
+                'Unconsumed trade requests: execute or explicitly take pending '
+                'requests before building another agent run'
+            )
+        self._pending_trades: list[TradeRequest] = []
 
         @function_tool
         def place_trade(
@@ -144,7 +169,7 @@ class AgentStrategy(Strategy):
             quantity: float,
             limit_price: float,
         ) -> str:
-            """Queue a trade to be executed after the agent run completes.
+            """Request a trade; queue acceptance is not execution or a fill.
 
             Args:
                 symbol: Ticker symbol to trade (e.g. 'BTC-YES').
@@ -155,23 +180,16 @@ class AgentStrategy(Strategy):
             Returns:
                 Confirmation that the trade has been queued.
             """
-            side_lower = side.strip().lower()
-            if side_lower not in ('buy', 'sell'):
-                return f'Invalid side "{side}". Must be "buy" or "sell".'
-            if quantity <= 0:
-                return f'Invalid quantity {quantity}. Must be > 0.'
-            if limit_price <= 0:
-                return f'Invalid limit_price {limit_price}. Must be > 0.'
-            request = TradeRequest(
-                symbol=symbol,
-                side=side_lower,
-                quantity=quantity,
-                limit_price=limit_price,
-            )
-            pending_trades.append(request)
+            try:
+                self.queue_trade(
+                    TradeRequest(symbol, side.strip().lower(), quantity, limit_price),
+                    context=ctx,
+                )
+            except ValueError as exc:
+                return f'Trade request rejected: {exc}'
             return (
-                f'Trade queued: {side_lower} {quantity} of {symbol} '
-                f'@ {limit_price}. Will execute after analysis completes.'
+                'Trade request queued, not submitted or filled. The strategy must '
+                'execute the queue and inspect the actual order outcome.'
             )
 
         @function_tool
@@ -248,6 +266,93 @@ class AgentStrategy(Strategy):
             place_trade,
         ]
 
+    def queue_trade(
+        self, request: TradeRequest, *, context: StrategyContext | None = None
+    ) -> None:
+        """Validate and queue a request without submitting an order."""
+        ctx = context or self.require_context()
+        if request.side not in ('buy', 'sell'):
+            raise ValueError('side must be buy or sell')
+        if not math.isfinite(request.quantity) or request.quantity <= 0:
+            raise ValueError('quantity must be finite and positive')
+        if not math.isfinite(request.limit_price) or not 0 < request.limit_price < 1:
+            raise ValueError('limit_price must be finite and strictly between 0 and 1')
+        if ctx.resolve_ticker(request.symbol) is None:
+            raise ValueError(f'unknown trade contract: {request.symbol}')
+        if not hasattr(self, '_pending_trades'):
+            self._pending_trades = []
+        self._pending_trades.append(request)
+
+    def take_pending_trades(self) -> list[TradeRequest]:
+        """Transfer ownership of pending requests, e.g. to execute or reject them.
+
+        A custom consumer must report actual outcomes. Rebuilding tools never
+        silently discards requests, and this method does not submit anything.
+        """
+        pending = getattr(self, '_pending_trades', [])
+        self._pending_trades = []
+        return pending
+
+    async def execute_pending_trades(
+        self, *, context: StrategyContext | None = None
+    ) -> list[AgentTradeOutcome]:
+        """Consume once and submit sequentially; stop at the first incomplete order.
+
+        No retry or unwind is implied. Results describe observed fills and
+        uncertainty; callers must reconcile uncertain outcomes independently.
+        """
+        ctx = context or self.require_context()
+        pending = self.take_pending_trades()
+        if not pending:
+            return []
+        outcomes = [
+            AgentTradeOutcome(
+                request,
+                SpreadOrderResult(
+                    success=False,
+                    failure_reason='not submitted',
+                ),
+            )
+            for request in pending
+        ]
+        self.last_trade_outcomes = outcomes
+        stopped = False
+        for index, request in enumerate(pending):
+            ticker = ctx.resolve_ticker(request.symbol)
+            if stopped or ticker is None:
+                execution = SpreadOrderResult(
+                    success=False,
+                    failure_reason=(
+                        'not submitted after an incomplete request'
+                        if stopped
+                        else f'unknown trade contract: {request.symbol}'
+                    ),
+                )
+            else:
+                # Retain an uncertain observation if submission is interrupted.
+                outcomes[index] = AgentTradeOutcome(
+                    request,
+                    SpreadOrderResult(
+                        success=False,
+                        execution_uncertain=True,
+                        failure_reason='submission interrupted; reconcile venue state',
+                    ),
+                )
+                execution = await SpreadExecutor(ctx.trader).execute_spread(
+                    [
+                        SpreadLeg(
+                            TradeSide(request.side),
+                            ticker,
+                            Decimal(str(request.limit_price)),
+                            Decimal(str(request.quantity)),
+                        )
+                    ],
+                    unwind_on_partial=False,
+                )
+            outcomes[index] = AgentTradeOutcome(request, execution)
+            stopped = stopped or not execution.success
+        return outcomes
+
     def _resolve_model(self) -> Any:
         """Resolve model, using ChatCompletions adapter for non-OpenAI providers."""
         import os
@@ -264,7 +369,9 @@ class AgentStrategy(Strategy):
                 from openai import AsyncOpenAI
 
                 client = AsyncOpenAI(base_url=base_url)
-                return OpenAIChatCompletionsModel(model=model_name, openai_client=client)
+                return OpenAIChatCompletionsModel(
+                    model=model_name, openai_client=client
+                )
             except ImportError:
                 pass
 

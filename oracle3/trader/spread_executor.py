@@ -2,7 +2,7 @@
 
 This is not atomic execution. A trader may leave orders outstanding or raise
 without reporting whether an order filled. Known fills are unwound in LIFO order
-when requested; uncertain venue state must be reconciled by the caller.
+only after terminal failures; uncertain venue state must be reconciled first.
 """
 
 from __future__ import annotations
@@ -90,8 +90,8 @@ class SpreadOrderResult:
     ``success`` requires every requested quantity to be confirmed fully filled.
     ``hedged`` means recovery neutralized all known fills and no order is uncertain.
     It describes this attempt's position change, not the account's total position.
-    Pending/partial orders and exceptions require reconciliation even if known
-    fills were reversed. No cancellation or retry is implied by this result.
+    Pending/partial orders and exceptions require reconciliation before
+    any automatic reversal is attempted. No cancellation or retry is implied by this result.
     """
 
     success: bool
@@ -156,7 +156,7 @@ def _inspect_result(
     order = result.order
     if order is None:
         reason = result.failure_reason
-        known_rejection = reason is not None and reason != OrderFailureReason.UNKNOWN
+        known_rejection = reason is not None and not result.requires_reconciliation
         return (
             Decimal('0'),
             reason.value if reason else 'no order returned',
@@ -169,6 +169,12 @@ def _inspect_result(
         or not _valid_decimal(order.filled_quantity)
     ):
         return Decimal('0'), 'invalid or mismatched order response', True
+    if order.execution_uncertain or not order.accounting_confirmed:
+        return (
+            Decimal('0'),
+            order.reconciliation_reason or 'fill accounting is unconfirmed',
+            True,
+        )
     filled = order.filled_quantity
     if not _valid_decimal(order.remaining) or not isinstance(order.status, OrderStatus):
         return filled, 'invalid order state', True
@@ -179,19 +185,21 @@ def _inspect_result(
     } or (order.status == OrderStatus.FILLED and order.remaining != 0)
     if order.status == OrderStatus.REJECTED and filled > 0:
         uncertain = True
-    if result.failure_reason == OrderFailureReason.UNKNOWN:
+    if result.requires_reconciliation:
         uncertain = True
     if (
         order.status == OrderStatus.FILLED
         and filled == leg.quantity
         and order.remaining == 0
         and result.failure_reason is None
+        and not uncertain
     ):
         return filled, '', False
     failure = (
         result.failure_reason.value
         if result.failure_reason is not None
         else f'{order.status.value}: filled {filled} of {leg.quantity}'
+        + ('; reconciliation required' if uncertain else '')
     )
     return filled, failure, uncertain
 
@@ -199,9 +207,9 @@ def _inspect_result(
 class SpreadExecutor:
     """Submit legs sequentially; stop at the first incomplete or uncertain order.
 
-    On failure, optionally reverse observed fills, including the current partial
-    leg. The Trader API has no cancellation/reconciliation operation, so this
-    helper cannot promise that outstanding orders will not fill later.
+    On a terminal failure, optionally reverse confirmed fills, including the
+    current terminal partial leg. An open order, exception or unconfirmed account
+    delta stops execution and recovery until the caller reconciles venue state.
     """
 
     def __init__(self, trader: Trader) -> None:
@@ -241,7 +249,11 @@ class SpreadExecutor:
                 outcome.uncertain_leg_indices.append(index)
             if failure:
                 outcome.failure_reason = f'leg {index} failed: {failure}'
-                if unwind_on_partial and filled_legs:
+                if (
+                    unwind_on_partial
+                    and filled_legs
+                    and not outcome.execution_uncertain
+                ):
                     await self._unwind(filled_legs, known, outcome)
                 outcome.residual_exposures = [
                     ResidualExposure(ticker, quantity)
@@ -346,6 +358,11 @@ class SpreadExecutor:
             details.append(
                 f'{label} unwind {side.value} {leg.ticker.symbol} qty={filled}: {attempt.failure_reason or "confirmed"}'
             )
+            if attempt.execution_uncertain:
+                details.append(
+                    'Recovery stopped: reconcile uncertain unwind before further orders'
+                )
+                break
         outcome.unwind_details = '; '.join(details)
 
     async def execute_pair_spread(

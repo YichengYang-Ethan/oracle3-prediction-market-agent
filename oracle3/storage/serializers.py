@@ -15,6 +15,7 @@ from oracle3.ticker.ticker import (
     CashTicker,
     KalshiTicker,
     PolyMarketTicker,
+    SolanaTicker,
     Ticker,
 )
 from oracle3.trader.types import Order, OrderStatus, Trade, TradeSide
@@ -26,6 +27,10 @@ from oracle3.trader.types import Order, OrderStatus, Trade, TradeSide
 
 def serialize_ticker(ticker: Ticker) -> dict:
     """Serialize a Ticker to a JSON-safe dict (fields inlined, no nesting)."""
+    if isinstance(ticker, SolanaTicker):
+        from dataclasses import asdict
+
+        return {'ticker_type': 'SolanaTicker', **asdict(ticker)}
     if isinstance(ticker, PolyMarketTicker):
         return {
             'ticker_type': 'PolyMarketTicker',
@@ -58,6 +63,23 @@ def serialize_ticker(ticker: Ticker) -> dict:
 def deserialize_ticker(d: dict) -> Ticker:
     """Reconstruct a Ticker from a flattened dict (fields inlined)."""
     ticker_type = d.get('ticker_type', '')
+    if ticker_type == 'SolanaTicker':
+        return SolanaTicker(
+            **{
+                key: d[key]
+                for key in (
+                    'symbol',
+                    'name',
+                    'yes_mint',
+                    'no_mint',
+                    'market_ticker',
+                    'event_ticker',
+                    'series_ticker',
+                    'is_no_side',
+                )
+                if key in d
+            }
+        )
     if ticker_type == 'PolyMarketTicker':
         return PolyMarketTicker(
             symbol=d['symbol'],
@@ -82,6 +104,8 @@ def deserialize_ticker(d: dict) -> Ticker:
             return CashTicker.POLYMARKET_USDC
         if symbol == CashTicker.KALSHI_USD.symbol:
             return CashTicker.KALSHI_USD
+        if symbol == CashTicker.DFLOW_USDC.symbol:
+            return CashTicker.DFLOW_USDC
         return CashTicker(symbol=symbol, name=d.get('name', ''))
     raise ValueError(f'Unknown ticker_type: {ticker_type!r}')
 
@@ -99,6 +123,10 @@ def serialize_trade(trade: Trade, timestamp: datetime | None = None) -> dict:
         'price': str(trade.price),
         'quantity': str(trade.quantity),
         'commission': str(trade.commission),
+        'venue_order_id': trade.venue_order_id,
+        'client_order_id': trade.client_order_id,
+        'execution_id': trade.execution_id,
+        'fee_source': trade.fee_source,
     }
     if timestamp is not None:
         d['timestamp'] = timestamp.isoformat()
@@ -113,6 +141,10 @@ def deserialize_trade(d: dict) -> Trade:
         price=Decimal(d['price']),
         quantity=Decimal(d['quantity']),
         commission=Decimal(d['commission']),
+        venue_order_id=d.get('venue_order_id', ''),
+        client_order_id=d.get('client_order_id', ''),
+        execution_id=d.get('execution_id', ''),
+        fee_source=d.get('fee_source', ''),
     )
 
 
@@ -158,6 +190,11 @@ def serialize_order(order: Order) -> dict:
         'remaining': str(order.remaining),
         'commission': str(order.commission),
         'trades': [serialize_trade(t) for t in order.trades],
+        'venue_order_id': order.venue_order_id,
+        'client_order_id': order.client_order_id,
+        'execution_uncertain': order.execution_uncertain,
+        'accounting_confirmed': order.accounting_confirmed,
+        'reconciliation_reason': order.reconciliation_reason,
     }
 
 
@@ -173,6 +210,11 @@ def deserialize_order(d: dict) -> Order:
         remaining=Decimal(d['remaining']),
         commission=Decimal(d['commission']),
         trades=[deserialize_trade(t) for t in d.get('trades', [])],
+        venue_order_id=d.get('venue_order_id', ''),
+        client_order_id=d.get('client_order_id', ''),
+        execution_uncertain=d.get('execution_uncertain', False),
+        accounting_confirmed=d.get('accounting_confirmed', True),
+        reconciliation_reason=d.get('reconciliation_reason', ''),
     )
 
 

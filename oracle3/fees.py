@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
+from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, ClassVar, TypeAlias
 
 __all__ = [
@@ -80,18 +80,33 @@ class UnsupportedFeeSchedule(ValueError):
     """Raised when a venue reports a fee schedule this module cannot price."""
 
 
+def _finite_decimal(value: Any, label: str) -> Decimal:
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError) as exc:
+        raise ValueError(f'{label} must be a finite number') from exc
+    if not parsed.is_finite():
+        raise ValueError(f'{label} must be a finite number')
+    return parsed
+
+
+def _nonnegative(value: Any, label: str, *, positive: bool = False) -> Decimal:
+    parsed = _finite_decimal(value, label)
+    if parsed < 0 or (positive and parsed == 0):
+        requirement = 'positive' if positive else 'nonnegative'
+        raise ValueError(f'{label} must be {requirement}')
+    return parsed
+
+
 def _price(value: float | Decimal) -> Decimal:
-    price = Decimal(str(value))
+    price = _finite_decimal(value, 'price')
     if not Decimal('0') < price < Decimal('1'):
         raise ValueError(f'price must be strictly between 0 and 1, got {value}')
     return price
 
 
 def _quantity(value: float | Decimal) -> Decimal:
-    qty = Decimal(str(value))
-    if qty <= 0:
-        raise ValueError(f'quantity must be positive, got {value}')
-    return qty
+    return _nonnegative(value, 'quantity', positive=True)
 
 
 def _round_up(amount: Decimal, increment: Decimal) -> Decimal:
@@ -108,8 +123,19 @@ class KalshiSchedule:
     multiplier: Decimal = Decimal('1')
     maker_fees: bool = False
     increment: Decimal = CENTICENT
+    source: str = 'standard default; market terms unverified'
 
     venue: ClassVar[str] = 'kalshi'
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, 'multiplier', _nonnegative(self.multiplier, 'multiplier')
+        )
+        object.__setattr__(
+            self, 'increment', _nonnegative(self.increment, 'increment', positive=True)
+        )
+        if not isinstance(self.maker_fees, bool):
+            raise ValueError('maker_fees must be a boolean')
 
     @classmethod
     def from_series(
@@ -129,11 +155,22 @@ class KalshiSchedule:
         if not fee_type.startswith('quadratic'):
             raise UnsupportedFeeSchedule(f'unknown Kalshi fee_type {fee_type!r}')
         multiplier = series.get('fee_multiplier')
-        return cls(
-            multiplier=Decimal(str(1 if multiplier is None else multiplier)),
-            maker_fees='maker' in fee_type,
-            increment=increment,
-        )
+        if 'fee_multiplier' in series and multiplier is None:
+            raise UnsupportedFeeSchedule('Kalshi fee_multiplier is null')
+        source = 'supplied series fee schedule'
+        if multiplier is None or not series.get('fee_type'):
+            source = 'incomplete series terms; standard defaults unverified'
+        try:
+            return cls(
+                multiplier=_nonnegative(
+                    1 if multiplier is None else multiplier, 'multiplier'
+                ),
+                maker_fees='maker' in fee_type,
+                increment=increment,
+                source=source,
+            )
+        except ValueError as exc:
+            raise UnsupportedFeeSchedule(f'invalid Kalshi fee schedule: {exc}') from exc
 
     def fee(
         self, price: float | Decimal, contracts: float | Decimal, *, maker: bool = False
@@ -155,6 +192,7 @@ class KalshiSchedule:
             'maker_k': float(KALSHI_MAKER_COEFFICIENT) if self.maker_fees else 0.0,
             'multiplier_M': float(self.multiplier),
             'rounding_increment': float(self.increment),
+            'source': self.source,
         }
 
 
@@ -167,13 +205,20 @@ class PolymarketSchedule:
 
     venue: ClassVar[str] = 'polymarket'
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, 'rate', _nonnegative(self.rate, 'rate'))
+
     @classmethod
     def from_gamma_market(cls, market: Mapping[str, Any]) -> PolymarketSchedule:
         """Build the schedule from a Gamma API market object."""
         if market.get('feesEnabled') is False:
             return cls(rate=Decimal('0'), source='feesEnabled=false')
-        schedule = market.get('feeSchedule')
-        if isinstance(schedule, Mapping):
+        if 'feeSchedule' in market:
+            schedule = market['feeSchedule']
+            if not isinstance(schedule, Mapping):
+                raise UnsupportedFeeSchedule('Polymarket feeSchedule must be an object')
+            if 'rate' not in schedule or schedule['rate'] is None:
+                raise UnsupportedFeeSchedule('Polymarket feeSchedule.rate is missing')
             exponent = schedule.get('exponent', 1)
             if exponent not in (1, 1.0, None):
                 raise UnsupportedFeeSchedule(
@@ -183,10 +228,15 @@ class PolymarketSchedule:
                 raise UnsupportedFeeSchedule(
                     'Polymarket feeSchedule with maker fees is not documented'
                 )
-            return cls(
-                rate=Decimal(str(schedule.get('rate', 0) or 0)),
-                source=f"feeSchedule ({market.get('feeType') or 'unnamed'})",
-            )
+            try:
+                return cls(
+                    rate=schedule['rate'],
+                    source=f'feeSchedule ({market.get("feeType") or "unnamed"})',
+                )
+            except ValueError as exc:
+                raise UnsupportedFeeSchedule(
+                    f'invalid Polymarket feeSchedule.rate: {exc}'
+                ) from exc
         return cls()
 
     @classmethod

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
+import math
 import os
 import random
 import tempfile
@@ -40,7 +41,8 @@ def _parse_json_object(raw: str, *, option_name: str) -> dict[str, Any]:
 
 def _to_decimal(value: object) -> Decimal | None:
     try:
-        return Decimal(str(value))
+        result = Decimal(str(value))
+        return result if result.is_finite() else None
     except Exception:  # noqa: BLE001
         return None
 
@@ -643,6 +645,17 @@ def _run_backtest_once(
         decision_stats = strategy.get_decision_stats()
         return {
             'total_trades': stats.total_trades,
+            'trade_count_unit': 'FIFO matched closing lots',
+            'total_fills': stats.total_fills,
+            'realized_pnl': str(stats.realized_pnl),
+            'unrealized_pnl': str(stats.unrealized_pnl),
+            'total_fees': str(stats.total_fees),
+            'cash': str(stats.cash),
+            'inventory_value': str(stats.inventory_value),
+            'valuation_complete': stats.valuation_complete,
+            'missing_marks': list(stats.missing_marks),
+            'sharpe_available': stats.sharpe_available,
+            'sharpe_reason': stats.sharpe_reason,
             'winning_trades': stats.winning_trades,
             'losing_trades': stats.losing_trades,
             'win_rate': str(stats.win_rate),
@@ -720,10 +733,11 @@ def _build_market_summaries(
 
 
 def _to_float_metric(value: object) -> float | None:
-    if value is None:
+    if value is None or isinstance(value, bool):
         return None
     try:
-        return float(value)
+        result = float(value)
+        return result if math.isfinite(result) else None
     except Exception:  # noqa: BLE001
         return None
 
@@ -760,16 +774,63 @@ def _fit_train_test_windows(
 
 
 def _alpha_score_from_metrics(metrics: dict[str, Any]) -> float | None:
-    """Composite score balancing return, drawdown, and turnover."""
+    """Legacy exploratory heuristic, not an estimate of statistical alpha.
+
+    Its arbitrary penalties use drawdown and matched closing-lot count, not
+    portfolio turnover. Unmarked NAV or missing inputs cannot produce a score.
+    """
+    if metrics.get('valuation_complete') is not True:
+        return None
     pnl = _to_float_metric(metrics.get('total_pnl'))
     max_drawdown = _to_float_metric(metrics.get('max_drawdown'))
     total_trades = _to_float_metric(metrics.get('total_trades'))
     if pnl is None or max_drawdown is None or total_trades is None:
         return None
 
-    turnover_penalty = 0.02 * total_trades
+    if max_drawdown < 0 or total_trades < 0:
+        return None
+    closing_lot_penalty = 0.02 * total_trades
     drawdown_penalty = 250.0 * max(0.0, max_drawdown)
-    return pnl - drawdown_penalty - turnover_penalty
+    return _to_float_metric(pnl - drawdown_penalty - closing_lot_penalty)
+
+
+_SELECTION_NOTE = (
+    'Exploratory selection only; no out-of-sample or live-performance validation. '
+    'alpha_score is a legacy PnL/drawdown/closing-lot heuristic, not measured alpha.'
+)
+
+
+def _metric_score(metrics: dict[str, Any], key: str) -> float | None:
+    """Require explicit availability; legacy sentinel zeros are not estimates."""
+    if key in {'total_pnl', 'max_drawdown', 'sharpe_ratio', 'alpha_score'}:
+        if metrics.get('valuation_complete') is not True:
+            return None
+    if key == 'sharpe_ratio' and metrics.get('sharpe_available') is not True:
+        return None
+    if key == 'alpha_score':
+        return _alpha_score_from_metrics(metrics)
+    if key == 'win_rate':
+        closed_lots = _to_float_metric(metrics.get('total_trades'))
+        if closed_lots is None or closed_lots <= 0:
+            return None
+    return _to_float_metric(metrics.get(key))
+
+
+def _scored_runs(
+    rows: list[dict[str, Any]], key: str
+) -> list[tuple[float, dict[str, Any]]]:
+    """Return only successful runs with available finite scores, best first."""
+    scored = []
+    for row in rows:
+        if not row.get('ok', True):
+            continue
+        metrics = row.get('metrics', row)
+        if isinstance(metrics, dict):
+            score = _metric_score(metrics, key)
+            if score is not None:
+                scored.append((score, row))
+    scored.sort(key=lambda item: item[0], reverse=key != 'max_drawdown')
+    return scored
 
 
 def _build_gate_checks(
@@ -779,11 +840,12 @@ def _build_gate_checks(
     min_total_pnl: Decimal,
     max_drawdown_pct: Decimal,
 ) -> tuple[bool, dict[str, bool]]:
-    trades = int(metrics.get('total_trades', 0))
+    trades = _to_decimal(metrics.get('total_trades'))
     pnl = _to_decimal(metrics.get('total_pnl'))
     dd = _to_decimal(metrics.get('max_drawdown'))
     checks = {
-        'min_trades_ok': trades >= min_trades,
+        'valuation_complete': metrics.get('valuation_complete') is True,
+        'min_trades_ok': trades is not None and trades >= min_trades,
         'min_pnl_ok': pnl is not None and pnl >= min_total_pnl,
         'max_drawdown_ok': dd is not None and dd <= max_drawdown_pct,
     }
@@ -1232,7 +1294,7 @@ def research_stress_test(
 )
 @click.option(
     '--sort-key',
-    default='sharpe_ratio',
+    default='total_pnl',
     show_default=True,
     type=click.Choice(
         ['sharpe_ratio', 'total_pnl', 'win_rate', 'max_drawdown', 'alpha_score']
@@ -1248,22 +1310,15 @@ def research_compare_runs(
     output: str | None,
     as_json: bool,
 ) -> None:
-    """Compare run outputs and rank by the selected metric."""
+    """Exploratory comparison of runs with an available selected metric."""
     rows = _load_jsonl_rows(input_file)
+    scored = _scored_runs(rows, sort_key)
     ranked: list[dict[str, object]] = []
-    for i, row in enumerate(rows, start=1):
+    for score, row in scored:
         metrics = row.get('metrics', row)
-        if not isinstance(metrics, dict):
-            continue
-        if sort_key == 'alpha_score':
-            score = _alpha_score_from_metrics(metrics)
-        else:
-            score = _to_float_metric(metrics.get(sort_key))
-        if score is None:
-            continue
         ranked.append(
             {
-                'rank_hint': i,
+                'rank_hint': rows.index(row) + 1,
                 'name': row.get('name') or row.get('scenario') or row.get('run_id'),
                 'ok': bool(row.get('ok', True)),
                 'score': score,
@@ -1271,14 +1326,15 @@ def research_compare_runs(
             }
         )
 
-    reverse = sort_key != 'max_drawdown'
-    ranked.sort(key=lambda x: float(x['score']), reverse=reverse)
     ranked = ranked[: max(top, 1)]
     if output:
         _write_jsonl(output, ranked)
     payload = {
         'message': 'Run comparison complete',
         'sort_key': sort_key,
+        'ranking_available': bool(scored),
+        'excluded_runs': len(rows) - len(scored),
+        'selection_note': _SELECTION_NOTE,
         'count': len(ranked),
         'top': ranked,
         'output': str(Path(output).resolve()) if output else None,
@@ -1382,15 +1438,13 @@ def research_strategy_gate(
         initial_capital=capital,
     )
 
-    trades = int(metrics.get('total_trades', 0))
-    pnl = _to_decimal(metrics.get('total_pnl'))
-    dd = _to_decimal(metrics.get('max_drawdown'))
-    checks = {
-        'dry_run_ok': dry_ok,
-        'min_trades_ok': trades >= min_trades,
-        'min_pnl_ok': pnl is not None and pnl >= min_pnl,
-        'max_drawdown_ok': dd is not None and dd <= max_dd,
-    }
+    _, checks = _build_gate_checks(
+        metrics=metrics,
+        min_trades=min_trades,
+        min_total_pnl=min_pnl,
+        max_drawdown_pct=max_dd,
+    )
+    checks['dry_run_ok'] = dry_ok
     passed = all(checks.values())
     payload = {
         'passed': passed,
@@ -1597,15 +1651,13 @@ def research_alpha_pipeline(
     stress_path = out_dir / 'stress.jsonl'
     _write_jsonl(str(stress_path), stress_rows)
 
-    trades = int(metrics.get('total_trades', 0))
-    pnl = _to_decimal(metrics.get('total_pnl'))
-    dd = _to_decimal(metrics.get('max_drawdown'))
-    gate_checks = {
-        'dry_run_ok': bool(preflight.get('ok')),
-        'min_trades_ok': trades >= min_trades,
-        'min_pnl_ok': pnl is not None and pnl >= min_pnl,
-        'max_drawdown_ok': dd is not None and dd <= max_dd,
-    }
+    _, gate_checks = _build_gate_checks(
+        metrics=metrics,
+        min_trades=min_trades,
+        min_total_pnl=min_pnl,
+        max_drawdown_pct=max_dd,
+    )
+    gate_checks['dry_run_ok'] = bool(preflight.get('ok'))
     gate_passed = all(gate_checks.values())
     gate_payload = {
         'passed': gate_passed,
@@ -1902,19 +1954,22 @@ def research_auto_tune(
     if selection_key == 'none':
         best_row = ok_rows[0]
     else:
-        reverse = selection_key != 'max_drawdown'
-
-        def _score(row: dict[str, object]) -> float:
-            metrics = row.get('metrics')
-            if not isinstance(metrics, dict):
-                return float('-inf') if reverse else float('inf')
-            if selection_key == 'alpha_score':
-                v = _alpha_score_from_metrics(metrics)
-            else:
-                v = _to_float_metric(metrics.get(selection_key))
-            return v if v is not None else (float('-inf') if reverse else float('inf'))
-
-        best_row = max(ok_rows, key=_score) if reverse else min(ok_rows, key=_score)
+        scored = _scored_runs(ok_rows, selection_key)
+        if not scored:
+            payload = {
+                'passed': False,
+                'message': f'No runs have an available, finite {selection_key}.',
+                'ranking_available': False,
+                'selection_key': selection_key,
+                'selection_note': _SELECTION_NOTE,
+                'best_run': None,
+                'selected_market': selected_market,
+                'artifacts_dir': str(out_dir),
+                'files': {'runs': str(runs_path)},
+            }
+            _emit(payload, as_json=as_json)
+            raise click.ClickException('auto-tune has no available selection metric.')
+        best_row = scored[0][1]
     best_path = out_dir / 'best_run.json'
     _write_json(str(best_path), best_row)
 
@@ -1988,6 +2043,8 @@ def research_auto_tune(
         'runs': len(discovery_rows),
         'ok_runs': len(ok_rows),
         'selection_key': selection_key,
+        'ranking_available': selection_key != 'none',
+        'selection_note': _SELECTION_NOTE,
         'gate_enforced': enforce_gate,
         'strategy_ref': strategy_ref,
         'best_run': best_row,
@@ -2172,17 +2229,17 @@ def research_batch_markets(
 
     ok_results = [r for r in results if r.get('ok')]
     win_rates = [
-        _to_float_metric((r['metrics'] or {}).get('win_rate'))
+        _metric_score(r['metrics'], 'win_rate')
         for r in ok_results
         if isinstance(r.get('metrics'), dict)
     ]  # type: ignore[index]
     sharpes = [
-        _to_float_metric((r['metrics'] or {}).get('sharpe_ratio'))
+        _metric_score(r['metrics'], 'sharpe_ratio')
         for r in ok_results
         if isinstance(r.get('metrics'), dict)
     ]  # type: ignore[index]
     pnls = [
-        _to_float_metric((r['metrics'] or {}).get('total_pnl'))
+        _metric_score(r['metrics'], 'total_pnl')
         for r in ok_results
         if isinstance(r.get('metrics'), dict)
     ]  # type: ignore[index]
@@ -2190,7 +2247,7 @@ def research_batch_markets(
     sharpes_f = [v for v in sharpes if v is not None]
     pnls_f = [v for v in pnls if v is not None]
     pct_profitable = (
-        (sum(1 for v in pnls_f if v > 0) / len(pnls_f) * 100) if pnls_f else 0.0
+        (sum(1 for v in pnls_f if v > 0) / len(pnls_f) * 100) if pnls_f else None
     )
 
     aggregate: dict[str, object] = {
@@ -2199,7 +2256,13 @@ def research_batch_markets(
         'stddev_sharpe': str(round(pstdev(sharpes_f), 4))
         if len(sharpes_f) > 1
         else None,
-        'pct_profitable': str(round(pct_profitable, 1)),
+        'sharpe_available_count': len(sharpes_f),
+        'sharpe_unavailable_count': len(ok_results) - len(sharpes_f),
+        'pnl_available_count': len(pnls_f),
+        'pnl_unavailable_count': len(ok_results) - len(pnls_f),
+        'pct_profitable': str(round(pct_profitable, 1))
+        if pct_profitable is not None
+        else None,
         'mean_pnl': str(round(mean(pnls_f), 4)) if pnls_f else None,
     }
 
@@ -2235,7 +2298,7 @@ def research_batch_markets(
 @click.option('--max-runs', default=100, show_default=True, type=int)
 @click.option(
     '--sort-key',
-    default='sharpe_ratio',
+    default='total_pnl',
     show_default=True,
     type=click.Choice(
         ['sharpe_ratio', 'total_pnl', 'win_rate', 'max_drawdown', 'alpha_score']
@@ -2256,7 +2319,7 @@ def research_grid(
     output: str,
     as_json: bool,
 ) -> None:
-    """Grid search over strategy hyperparameters on one market.
+    """Exploratory grid search over strategy hyperparameters on one market.
 
     Supply parameter sets via --param-grid-json (Cartesian product) or
     --params-jsonl (explicit JSONL list).  If both are given, JSONL rows
@@ -2339,23 +2402,10 @@ def research_grid(
     _write_jsonl(output, results)
 
     ok_results = [r for r in results if r.get('ok')]
+    scored = _scored_runs(ok_results, sort_key)
     best: dict[str, object] | None = None
-    if ok_results:
-        reverse = sort_key != 'max_drawdown'
-
-        def _score(r: dict[str, object]) -> float:
-            metrics = r.get('metrics')
-            if not isinstance(metrics, dict):
-                return float('-inf') if reverse else float('inf')
-            if sort_key == 'alpha_score':
-                v = _alpha_score_from_metrics(metrics)
-            else:
-                v = _to_float_metric(metrics.get(sort_key))
-            return v if v is not None else (float('-inf') if reverse else float('inf'))
-
-        best_run = (
-            max(ok_results, key=_score) if reverse else min(ok_results, key=_score)
-        )
+    if scored:
+        best_run = scored[0][1]
         best = {**best_run.get('strategy_kwargs', {}), **best_run.get('metrics', {})}  # type: ignore[arg-type]
 
     payload = {
@@ -2364,6 +2414,9 @@ def research_grid(
         'ok_runs': len(ok_results),
         'best': best,
         'sort_key': sort_key,
+        'ranking_available': bool(scored),
+        'unavailable_runs': len(ok_results) - len(scored),
+        'selection_note': _SELECTION_NOTE,
         'output': str(Path(output).resolve()),
     }
     _emit(payload, as_json=as_json)

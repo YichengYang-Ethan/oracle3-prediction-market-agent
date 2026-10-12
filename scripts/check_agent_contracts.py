@@ -8,17 +8,21 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
+import platform
 import socket
+import subprocess
 from collections.abc import Awaitable, Callable
 from decimal import Decimal
-from importlib.metadata import version
+from importlib.metadata import distributions, version
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
 
 import httpx
 
+import oracle3
 from oracle3 import __version__
 from oracle3.data.market_data_manager import MarketDataManager
 from oracle3.mcp_server import venues
@@ -284,8 +288,6 @@ async def _unresolved_partial() -> dict[str, Any]:
         [
             ('filled', '10'),
             ('partially_filled', '1'),
-            ('filled', '1'),
-            ('filled', '10'),
         ],
         unwind=True,
     )
@@ -293,8 +295,16 @@ async def _unresolved_partial() -> dict[str, Any]:
     _require(not payload['hedged'], 'Unknown remaining execution reported hedged')
     _require(payload['execution_uncertain'], 'Open remainder omitted uncertainty')
     _require(payload['requires_reconciliation'], 'Open remainder needs reconciliation')
-    _require(not payload['residual_exposures'], 'Known fills should have been reversed')
-    _require(len(calls) == 4, 'Expected both known fills to be reversed')
+    _require(
+        {
+            item['ticker']['symbol']: item['quantity']
+            for item in payload['residual_exposures']
+        }
+        == {'A': '10', 'B': '1'},
+        'Open remainder must retain all known exposure for reconciliation',
+    )
+    _require(not payload['unwind_results'], 'Uncertain execution must not auto-unwind')
+    _require(len(calls) == 2, 'No further orders should follow uncertain execution')
     return {'result': payload, 'simulated_calls': calls}
 
 
@@ -313,6 +323,63 @@ CASES: tuple[tuple[str, Case], ...] = (
 
 def _deny_network(*args: Any, **kwargs: Any) -> None:
     raise RuntimeError('Network is disabled by the deterministic contract runner')
+
+
+def _source_fingerprint(package_root: Path, runner: Path) -> str:
+    """Hash executed package sources plus fixtures, independent of checkout path."""
+    digest = hashlib.sha256()
+    files = [
+        (f'oracle3/{path.relative_to(package_root).as_posix()}', path)
+        for path in package_root.rglob('*.py')
+    ]
+    files.append(('scripts/check_agent_contracts.py', runner))
+    for label, path in sorted(files):
+        digest.update(label.encode('utf-8') + b'\0')
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
+
+
+def _provenance() -> dict[str, Any]:
+    runner = Path(__file__).resolve()
+    package_root = Path(oracle3.__file__).resolve().parent
+    revision = None
+    dirty = None
+    # A repository revision only applies if this runner imported its own source.
+    if package_root == runner.parent.parent / 'oracle3':
+        try:
+            revision = subprocess.run(
+                ['git', 'rev-parse', 'HEAD'],
+                cwd=runner.parent.parent,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=5,
+            ).stdout.strip()
+            dirty = bool(
+                subprocess.run(
+                    ['git', 'status', '--porcelain', '--untracked-files=normal'],
+                    cwd=runner.parent.parent,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=5,
+                ).stdout.strip()
+            )
+        except (OSError, subprocess.SubprocessError):
+            revision = None
+    dependencies = {
+        dist.metadata['Name'].lower().replace('_', '-'): dist.version
+        for dist in distributions()
+        if dist.metadata['Name']
+    }
+    return {
+        'source_git_revision': revision,
+        'source_git_dirty': dirty,
+        'source_sha256': _source_fingerprint(package_root, runner),
+        'source_hash_scope': 'oracle3 Python sources and this runner with its fixtures',
+        'python_version': platform.python_version(),
+        'dependencies': dict(sorted(dependencies.items())),
+    }
 
 
 async def run_suite() -> dict[str, Any]:
@@ -353,11 +420,14 @@ async def run_suite() -> dict[str, Any]:
         venues.set_transport(previous_transport)
     failed = sum(item['status'] == 'failed' for item in results)
     return {
-        'schema_version': 1,
+        'schema_version': 2,
         'evaluation': 'deterministic_tool_contract_regression',
-        'fixture_version': '1',
+        'fixture_version': '2',
         'oracle3_version': __version__,
         'mcp_version': version('mcp'),
+        'deterministic': True,
+        'determinism_scope': 'Fixed fixtures with identical source and dependencies',
+        'provenance': _provenance(),
         'scope': 'Tool and execution behavior only; no LLM or skill efficacy evaluation.',
         'network': 'disabled',
         'summary': {

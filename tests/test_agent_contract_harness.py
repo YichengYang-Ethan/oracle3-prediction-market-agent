@@ -15,7 +15,29 @@ async def test_frozen_suite_passes_and_is_reproducible():
     assert first['summary'] == {'total': 9, 'passed': 9, 'failed': 0}
     assert len({case['case_id'] for case in first['cases']}) == 9
     assert all(case['evidence'] for case in first['cases'])
+    assert first['deterministic'] is True
+    provenance = first['provenance']
+    assert len(provenance['source_sha256']) == 64
+    assert provenance['dependencies']['mcp'] == first['mcp_version']
+    assert provenance['python_version']
     json.dumps(first, allow_nan=False)
+
+
+def test_source_fingerprint_is_path_independent_and_detects_changes(tmp_path):
+    hashes = []
+    for folder in ('first', 'second'):
+        package = tmp_path / folder / 'oracle3'
+        package.mkdir(parents=True)
+        (package / 'module.py').write_text('VALUE = 1\n')
+        runner = package.parent / 'runner.py'
+        runner.write_text('FIXTURE = 1\n')
+        hashes.append(harness._source_fingerprint(package, runner))
+    assert hashes[0] == hashes[1]
+    (package / 'module.py').write_text('VALUE = 2\n')
+    changed = harness._source_fingerprint(package, runner)
+    assert changed != hashes[1]
+    runner.write_text('FIXTURE = 2\n')
+    assert harness._source_fingerprint(package, runner) != changed
 
 
 async def test_runner_blocks_accidental_network_and_reports_failure(monkeypatch):

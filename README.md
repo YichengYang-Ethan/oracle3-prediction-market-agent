@@ -140,11 +140,11 @@ From the checkout above:
 .venv/bin/python scripts/check_agent_contracts.py --output agent-contracts.json
 ```
 
-The runner blocks socket connections, needs no credentials, writes JSON evidence, and exits nonzero on a failed case. [CI](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/actions/workflows/pytest.yml) runs it with the locked dependencies and latest supported MCP SDK and uploads the reports. The wider suite covers fees, constraint calculations, venue adapters and execution behavior; see the [tests](tests/).
+The runner blocks socket connections, needs no credentials, writes JSON evidence, and exits nonzero on a failed case. [CI](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/actions/workflows/pytest.yml) runs it with the locked dependencies and latest supported MCP SDK and uploads the reports. CI also installs the built wheel outside the checkout and verifies the real stdio MCP handshake, tool listing, call and shutdown on SDK 1.x and 2.x. The wider suite covers accounting, concurrent paper-ledger writes, request deduplication and execution recovery; see the [tests](tests/).
 
-This is deterministic regression coverage for the tool environment. LLM reasoning, Skill effectiveness and trading profitability require separate evaluations. `SpreadExecutor` submits sequential orders, exposes fills and recovery attempts, and retains uncertainty; it does not provide atomic multi-venue transactions or durable recovery after process loss. Its integration into the strategy collection is still in progress.
+This is deterministic regression coverage for the tool environment. LLM reasoning, Skill effectiveness and trading profitability require separate evaluations. `SpreadExecutor` submits sequential orders, exposes fills and recovery attempts, and retains uncertainty; it does not provide atomic multi-venue transactions or durable recovery after process loss. Implication, exclusivity, conditional and structural strategies now use shared fees and explicit basket state; other strategies remain unevenly integrated.
 
-[Case definitions, output contract and migration notes](docs/agent-harness.md)
+[Case definitions and output contract](docs/agent-harness.md) · [Runtime integrity and migration](docs/runtime-integrity.md)
 
 ## CLI and agent skills
 
@@ -179,9 +179,9 @@ New venue, data-provider and wallet integrations start in [oracle3-extras](https
 
 The following are planned work, not current guarantees:
 
-- **Agent reliability:** expand replayable failure cases, add durable execution traces and reconciliation, and test adapters against common behavior contracts.
+- **Agent reliability:** extend intent journaling to verified account-wide recovery, persist strategy ownership, and expand replayable adapter failure cases.
 - **Agent evaluation:** define labeled end-to-end tasks, model/Skill baselines and metrics for task completion, tool errors and unsupported conclusions.
-- **Execution integration:** route strategy signals through shared fee schedules and connect multi-leg strategies to explicit fill/recovery states.
+- **Execution integration:** extend shared fees and explicit basket states to remaining strategies; verify Polymarket net fee accounting and automated restart reconciliation.
 - **Market evidence:** measure fee-surviving gaps with timestamped data and publish reproducible forward observations with execution assumptions.
 
 Useful contributions include a reproducible tool failure, a venue-adapter fixture, a client setup correction or a task with a checkable expected outcome. Start with the [contributing guide](.github/CONTRIBUTING.md), [open problems](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/issues?q=is%3Aissue+label%3Aopen-problem) or [Discussions](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/discussions). Coding agents should read [AGENTS.md](AGENTS.md).

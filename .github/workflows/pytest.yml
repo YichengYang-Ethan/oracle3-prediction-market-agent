@@ -11,6 +11,40 @@ on:
     branches: [main]
 
 jobs:
+  Installed-wheel-MCP:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - sdk: '1'
+            mcp: 'mcp>=1.19,<2'
+          - sdk: '2'
+            mcp: 'mcp>=2,<3'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build the actual distribution
+        run: |
+          python -m pip install build
+          python -m build --wheel
+      - name: Install wheel and verify the real stdio transport outside the checkout
+        run: |
+          python -m venv "$RUNNER_TEMP/oracle3-wheel"
+          wheel_python="$RUNNER_TEMP/oracle3-wheel/bin/python"
+          "$wheel_python" -m pip install "$GITHUB_WORKSPACE"/dist/*.whl '${{ matrix.mcp }}'
+          "$wheel_python" -m pip check
+          cp scripts/check_installed_mcp.py "$RUNNER_TEMP/check_installed_mcp.py"
+          cd "$RUNNER_TEMP"
+          "$wheel_python" check_installed_mcp.py --wheel "$GITHUB_WORKSPACE"/dist/*.whl > "$GITHUB_WORKSPACE/mcp-wheel.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mcp-installed-wheel-sdk-${{ matrix.sdk }}
+          path: mcp-wheel.json
+          if-no-files-found: ignore
+
   Pytest:
     runs-on: ubuntu-latest
     strategy:
