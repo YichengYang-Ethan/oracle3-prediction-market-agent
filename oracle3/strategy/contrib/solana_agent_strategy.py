@@ -107,7 +107,7 @@ class SolanaAgentStrategy(AgentStrategy):
                 output = self.get_run_final_output(result)
 
                 # Execute any trades the agent queued via place_trade tool
-                pending = getattr(self, '_pending_trades', [])
+                pending = self.take_pending_trades()
                 if pending:
                     await self._execute_pending_trades(pending, trader)
 
@@ -210,7 +210,9 @@ class SolanaAgentStrategy(AgentStrategy):
 
         if action != 'HOLD' and confidence >= self.confidence_threshold:
             side = TradeSide.BUY if action == 'BUY' else TradeSide.SELL
-            price = Decimal(str(ask_price)) if action == 'BUY' else Decimal(str(bid_price))
+            price = (
+                Decimal(str(ask_price)) if action == 'BUY' else Decimal(str(bid_price))
+            )
             quantity = self._cap_quantity(self.trade_size, ticker, trader)
             if quantity > Decimal('0'):
                 result = await trader.place_order(side, ticker, price, quantity)
@@ -332,28 +334,35 @@ class SolanaAgentStrategy(AgentStrategy):
                 continue
 
             side = TradeSide.BUY if req.side == 'buy' else TradeSide.SELL
-            quantity = self._cap_quantity(
-                Decimal(str(req.quantity)), ticker, trader
-            )
+            quantity = self._cap_quantity(Decimal(str(req.quantity)), ticker, trader)
             if quantity <= Decimal('0'):
-                logger.info('Skipping queued trade for %s: capped quantity is 0', req.symbol)
+                logger.info(
+                    'Skipping queued trade for %s: capped quantity is 0', req.symbol
+                )
                 continue
 
             price = Decimal(str(req.limit_price))
             logger.info(
                 'Executing queued trade: %s %s of %s @ %s',
-                req.side, quantity, req.symbol, price,
+                req.side,
+                quantity,
+                req.symbol,
+                price,
             )
             result = await trader.place_order(side, ticker, price, quantity)
             if result.failure_reason is not None:
                 logger.warning(
                     'Queued %s order failed for %s: %s',
-                    req.side, req.symbol, result.failure_reason,
+                    req.side,
+                    req.symbol,
+                    result.failure_reason,
                 )
             elif result.order is not None:
                 logger.info(
                     'Queued %s order placed for %s: status=%s filled=%s',
-                    req.side, req.symbol, result.order.status,
+                    req.side,
+                    req.symbol,
+                    result.order.status,
                     result.order.filled_quantity,
                 )
 
@@ -384,7 +393,11 @@ class SolanaAgentStrategy(AgentStrategy):
             best = trader.market_data.get_best_bid(ticker)
 
         if best is None:
-            logger.warning('No %s available for %s', 'ask' if side == TradeSide.BUY else 'bid', ticker_name)
+            logger.warning(
+                'No %s available for %s',
+                'ask' if side == TradeSide.BUY else 'bid',
+                ticker_name,
+            )
             return
 
         price = best.price
@@ -395,22 +408,28 @@ class SolanaAgentStrategy(AgentStrategy):
 
         logger.info(
             'Placing signal trade: %s %s of %s @ %s (confidence=%.2f)',
-            action, quantity, ticker_name, price, confidence,
+            action,
+            quantity,
+            ticker_name,
+            price,
+            confidence,
         )
         result = await trader.place_order(side, ticker, price, quantity)
         if result.failure_reason is not None:
-            logger.warning('Signal trade failed for %s: %s', ticker_name, result.failure_reason)
+            logger.warning(
+                'Signal trade failed for %s: %s', ticker_name, result.failure_reason
+            )
 
     # ------------------------------------------------------------------
     # Position sizing
     # ------------------------------------------------------------------
 
-    def _cap_quantity(
-        self, desired: Decimal, ticker: Any, trader: Trader
-    ) -> Decimal:
+    def _cap_quantity(self, desired: Decimal, ticker: Any, trader: Trader) -> Decimal:
         """Cap *desired* quantity so the resulting position does not exceed
         ``max_position_pct`` of the total portfolio value."""
-        portfolio_values = trader.position_manager.get_portfolio_value(trader.market_data)
+        portfolio_values = trader.position_manager.get_portfolio_value(
+            trader.market_data
+        )
         total_value = sum(portfolio_values.values(), Decimal('0'))
         if total_value <= Decimal('0'):
             return desired

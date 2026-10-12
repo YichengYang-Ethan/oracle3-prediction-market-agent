@@ -94,3 +94,9 @@ and integration across strategies remains in progress.
 - [CLI monitoring](CLI_MONITORING.md): inspecting and controlling engine sessions.
 - [Solana execution architecture](architecture.md): pre-flight checks and submission behavior.
 - [Origin and attribution](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent#origin-and-attribution): the Coinjure / U Lab foundation.
+
+## Runtime integrity
+
+[Runtime integrity and migration](runtime-integrity.md) explains marked accounting,
+durable order intents, paper-ledger retries, strategy basket states, installed-wheel
+MCP checks, and the remaining limits on automated account recovery.

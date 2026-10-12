@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import os
 from decimal import Decimal
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from oracle3.core.trading_engine import TradingEngine
@@ -33,6 +36,23 @@ if TYPE_CHECKING:
     from oracle3.storage.state_store import StateStore
 
 logger = logging.getLogger(__name__)
+
+
+def _live_journal_config(
+    venue: str, public_account: str, state_store: StateStore | None
+) -> dict:
+    """Account-scoped durable intent log; never persist a credential as an ID."""
+    if not public_account:
+        raise ValueError('Public account identity required for durable order recovery')
+    identity = hashlib.sha256(public_account.lower().encode()).hexdigest()[:24]
+    namespace = f'{venue}-{identity}'
+    directory = Path(
+        getattr(state_store, 'data_dir', Path.home() / '.oracle3' / 'orders')
+    )
+    return {
+        'journal_path': directory / f'{namespace}.sqlite3',
+        'journal_namespace': namespace,
+    }
 
 
 def _emit_stdout(message: str, *, emit_text: bool) -> None:
@@ -130,7 +150,10 @@ async def run_live_trading(
 
 
 async def run_live_paper_trading(
-    data_source: LivePolyMarketDataSource | LiveNewsDataSource | LiveRSSNewsDataSource | DFlowDataSource,
+    data_source: LivePolyMarketDataSource
+    | LiveNewsDataSource
+    | LiveRSSNewsDataSource
+    | DFlowDataSource,
     strategy: Strategy,
     initial_capital: Decimal,
     risk_manager: RiskManager | None = None,
@@ -268,6 +291,12 @@ async def run_live_polymarket_trading(
             max_drawdown_pct=Decimal('0.2'),
         )
 
+    if funder:
+        public_account = funder
+    else:
+        from eth_account import Account
+
+        public_account = Account.from_key(wallet_private_key).address
     trader = PolymarketTrader(
         market_data=market_data,
         risk_manager=risk_manager,
@@ -276,6 +305,7 @@ async def run_live_polymarket_trading(
         signature_type=signature_type,
         funder=funder,
         alerter=alerter,
+        **_live_journal_config('polymarket', public_account, state_store),
     )
 
     # Initialize USDC position: prefer live exchange balance for reconciliation.
@@ -495,6 +525,9 @@ async def run_live_kalshi_trading(
         api_key_id=api_key_id,
         private_key_path=private_key_path,
         alerter=alerter,
+        **_live_journal_config(
+            'kalshi', api_key_id or os.environ.get('KALSHI_API_KEY_ID', ''), state_store
+        ),
     )
 
     # Fetch initial balance from Kalshi (via the trader's portfolio API)

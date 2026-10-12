@@ -53,6 +53,7 @@ nav:
   - Agent quickstart: agent-quickstart.md
   - MCP server: mcp.md
   - Agent contract harness: agent-harness.md
+  - Runtime integrity: runtime-integrity.md
   - oracle3-extras: extras.md
   - Research:
       - Do arbitrage edges survive fees?: research/fee-frontier.md

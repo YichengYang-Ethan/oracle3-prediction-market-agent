@@ -612,7 +612,7 @@ async def paper_order(
         Field(description="Side of the binary contract to buy: 'yes' or 'no'."),
     ],
     contracts: Annotated[
-        float, Field(description='Contracts to buy; must be positive.')
+        float, Field(description='Contracts to buy; must be finite and positive.')
     ],
     limit_price: Annotated[
         float,
@@ -623,6 +623,12 @@ async def paper_order(
             )
         ),
     ],
+    request_id: Annotated[
+        str | None,
+        Field(
+            description='Optional nonblank retry key, unique until paper_reset. Reuse only for the identical order intent.'
+        ),
+    ] = None,
 ) -> dict[str, Any]:
     """Simulate buying YES or NO contracts in the local paper ledger, filling against the live order book with venue fees. Never sends an order to a venue.
 
@@ -632,11 +638,25 @@ async def paper_order(
     in ORACLE3_MCP_LEDGER); only buys are supported and positions are held at
     cost. Returns status (filled, partially_filled, unfilled, or rejected when
     paper cash is short), requested and filled contracts, average price, cost,
-    fees and the per-level fills.
+    fees and the per-level fills. Supply request_id for safe retries: an identical
+    venue/market/side/quantity/limit returns the original result without another
+    fill, including unfilled or rejected results; changed intent is an error.
+    Without request_id, each call is a new order. Reset clears retry history.
     """
+    intent = PaperLedger.order_intent(
+        venue=venue,
+        market_id=market_id,
+        side=side,
+        contracts=contracts,
+        limit_price=limit_price,
+    )
+    ledger = PaperLedger()
+    prior = ledger.prior_result(request_id, intent)
+    if prior is not None:
+        return prior
     book = await venues.orderbook(venue, market_id, depth=50)
     schedule = await venues.fee_schedule(venue, market_id)
-    return PaperLedger().buy(
+    return ledger.buy(
         venue=venue,
         market_id=market_id,
         side=side,
@@ -644,6 +664,7 @@ async def paper_order(
         limit_price=limit_price,
         asks=[(float(p), float(q)) for p, q in book[side]['asks']],
         schedule=schedule,
+        request_id=request_id,
     )
 
 
@@ -673,8 +694,8 @@ def paper_reset(
 ) -> dict[str, Any]:
     """Erase the local paper ledger and restore the $10,000 starting cash.
 
-    Deletes all paper positions and fill history; no venue is contacted and real
-    accounts are never touched. Without confirm=true it returns status
+    Deletes all paper positions, fill history and request_id retry history. No
+    venue is contacted and real accounts are never touched. Without confirm=true it returns status
     not_reset and changes nothing. Use it to start a fresh paper-trading
     session.
     """

@@ -9,7 +9,7 @@ supports a local paper ledger; no MCP tool places real orders.
 
 `pip install oracle3` and `uvx --from oracle3 oracle3-mcp` run the **published
 package**. The **main checkout** can contain changes that are not released yet.
-The `assessment` fields and regression runner below describe main; do not infer
+The `assessment` fields, paper retry handling and regression runner below describe main; do not infer
 their availability from a package version badge alone.
 
 For current main, clone and install a checkout:
@@ -159,18 +159,32 @@ uses the same defaults.
 ## Local paper side effects
 
 For paper execution, `paper_order` accepts arguments such as
-`{"venue":"kalshi","market_id":"<returned ticker>","side":"yes","contracts":1,"limit_price":0.55}`.
+`{"venue":"kalshi","market_id":"<returned ticker>","side":"yes","contracts":1,"limit_price":0.55,"request_id":"experiment-01-leg-1"}`.
 It walks a live-book snapshot and writes `~/.oracle3/mcp_paper_ledger.json`, or
-the path in `ORACLE3_MCP_LEDGER`. Inspect `status`, `requested`, `filled`, `fees`,
-and `levels`; a partial fill is not a completed basket. Each leg is a separate
-simulation call.
+the path in `ORACLE3_MCP_LEDGER`. Inspect `status` and, for a fill, `requested`,
+`filled`, `fees` and `levels`; a partial fill is not a completed basket. Each leg
+is a separate simulation call. Quantities must be finite and positive, and the
+limit finite and strictly between 0 and 1; invalid order inputs fail before HTTP.
+
+Use an optional nonblank `request_id` for retries. Once a result is saved, the
+same key with identical venue, market, side, quantity and limit returns it without
+another fill or venue request; changing the intent is an error. Unfilled and
+rejected results are remembered too. Use a new key for a deliberate new attempt
+and a distinct key for each leg. Without a key, every call is a new order.
 
 `paper_portfolio` takes `{}` and reads that ledger. It supports buys, carries
 holdings at cost, and does not track resolution or P&L. This ledger is separate
 from the CLI paper engine. `paper_reset` with `{"confirm":true}` erases paper
-holdings and fill history; without confirmation it changes nothing. A shared
-server process uses its configured ledger; use separate paths for experiments
-that need separate state.
+holdings, fills and retry history; without confirmation it changes nothing.
+Reads, orders and resets lock across cooperating processes on a local
+filesystem and use atomic writes. Sharing a ledger path shares one account;
+use separate paths for experiments that need separate state.
+
+Valid older ledgers load automatically. Invalid JSON, nonfinite values or
+inconsistent accounting produce an error and preserve the file, including when
+reset is requested. Preserve a copy and restore a valid backup, or point
+`ORACLE3_MCP_LEDGER` at a fresh path and restart the server. Do not edit the
+ledger or delete its `.lock` sidecar while servers are using it.
 
 ## Agent skills
 

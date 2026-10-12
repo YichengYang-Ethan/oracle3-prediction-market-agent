@@ -16,8 +16,8 @@ Run this as a client-managed subprocess; stdio waits for MCP protocol input.
 `--transport streamable-http` for HTTP. Use a virtual environment for pip
 installs and configure the absolute path to its server executable.
 
-This page describes current `main`. The explicit `assessment` fields and
-new execution contracts were added after release 1.2.2. For those behaviors,
+This page describes current `main`. The explicit `assessment` fields, paper
+retry handling and execution contracts were added after release 1.2.2. For those behaviors,
 follow the source installation in the [agent quickstart](agent-quickstart.md).
 The quickstart also provides an offline first call with exact arguments and
 expected output.
@@ -56,7 +56,7 @@ The server is listed in the MCP Registry as `io.github.YichengYang-Ethan/oracle3
 | `fair_value` | `market_price`, `lam` | Probability implied under the Wang transform | none |
 | `list_relation_types` | | Supported relations and their bounds | none |
 | `list_relations` | `market_id`, `spread_type`, `status` | Relations saved locally, for example by `oracle3-extras kairos sync` | reads `~/.oracle3/relations.json` |
-| `paper_order` | `venue`, `market_id`, `side`, `contracts`, `limit_price` | Fill against the live book, with fees | writes the paper ledger |
+| `paper_order` | `venue`, `market_id`, `side`, `contracts`, `limit_price`, optional `request_id` | Fill against the live book, with fees; original result on retry | writes the paper ledger |
 | `paper_portfolio` | | Cash, positions, fill count | reads the paper ledger |
 | `paper_reset` | `confirm` | Fresh ledger | erases the paper ledger |
 
@@ -68,6 +68,44 @@ from the venue's market page and verify the outcome mapping before assuming a
 relationship. The MCP paper ledger is separate from the
 trading engine's paper state. Use your client's `tools/list` response for the
 installed server's complete JSON input schemas; older releases may differ.
+
+## Local paper orders and retries
+
+Call `paper_order` with a returned market ID and a distinct retry key for each
+intended order, for example:
+
+```json
+{
+  "venue": "kalshi",
+  "market_id": "<returned ticker>",
+  "side": "yes",
+  "contracts": 1,
+  "limit_price": 0.55,
+  "request_id": "experiment-01-leg-1"
+}
+```
+
+`contracts` must be finite and positive; `limit_price` must be finite and
+strictly between 0 and 1. Invalid order inputs fail before venue requests.
+Once a result is saved, the same nonblank `request_id` with identical venue,
+market, side, quantity and limit returns it without another fill or venue request.
+Changing that intent is an error. Unfilled and rejected results are also
+remembered: use a new key for a deliberate new attempt. Without `request_id`,
+each call is a new order. `paper_reset` with `{"confirm":true}` clears positions,
+fills and retry history; without confirmation it changes nothing.
+
+Ledger reads, orders and resets use an interprocess lock and atomic file
+replacement. This assumes cooperating processes using this implementation on
+a local filesystem; the same path shares one paper account. Use separate paths
+for separate experiments. Positions remain at cost: this ledger does not track
+resolution or P&L, and each basket leg is a separate simulation.
+
+Valid older JSON ledgers load without a manual migration. Malformed JSON,
+nonfinite values or inconsistent accounting cause an error and leave the file
+intact; even `paper_reset` refuses to overwrite it. Preserve a copy, then
+restore a valid backup or configure a fresh `ORACLE3_MCP_LEDGER` path and restart
+the server. Do not edit the ledger or remove its `.lock` sidecar while servers
+are using it.
 
 ## Relations
 

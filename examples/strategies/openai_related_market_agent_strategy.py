@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
+import math
 from decimal import Decimal
 
 from oracle3.events.events import Event, PriceChangeEvent
-from oracle3.strategy.agent_strategy import AgentStrategy
+from oracle3.strategy.agent_strategy import AgentStrategy, TradeRequest
 from oracle3.trader.trader import Trader
-from oracle3.trader.types import TradeSide
 
 
 class OpenAIRelatedMarketAgentStrategy(AgentStrategy):
@@ -19,6 +19,7 @@ class OpenAIRelatedMarketAgentStrategy(AgentStrategy):
         agent_max_turns: int = 8,
         decision_cooldown_events: int = 60,
     ) -> None:
+        super().__init__()
         self.trade_size = Decimal(str(trade_size))
         self.agent_model = agent_model
         self.agent_max_turns = agent_max_turns
@@ -32,6 +33,8 @@ class OpenAIRelatedMarketAgentStrategy(AgentStrategy):
                 base,
                 'You are searching for lead-lag or dependency relationships across markets.',
                 'Use the available tools before deciding.',
+                'place_trade queues a request, not a fill. Queued requests take precedence '
+                'over the final JSON action; do not describe them as executed.',
                 'Return strict JSON with keys: action, side, target_symbol, reasoning, confidence.',
                 'Allowed action values: buy, sell, hold.',
                 'Allowed side values: yes, no.',
@@ -48,7 +51,7 @@ class OpenAIRelatedMarketAgentStrategy(AgentStrategy):
             [
                 f'Current event ticker: {ticker_symbol}',
                 'Find whether another visible market is leading or confirming this market.',
-                'If there is a tradable lag opportunity, propose buy_yes or sell_yes.',
+                'If there is a tradable lag opportunity, propose action buy or sell with side yes or no.',
                 'Otherwise return hold.',
             ]
         )
@@ -70,18 +73,23 @@ class OpenAIRelatedMarketAgentStrategy(AgentStrategy):
         try:
             run_result = await self.run_openai_agent(context=context)
         except Exception as exc:
+            discarded = self.take_pending_trades()
             self.record_decision(
                 ticker_name=event.ticker.name or event.ticker.symbol,
                 action='HOLD',
                 executed=False,
-                reasoning=f'agent analysis failed: {exc}',
+                reasoning=(
+                    f'agent analysis failed: {exc}; '
+                    f'{len(discarded)} unsubmitted requests discarded'
+                ),
                 signal_values={},
             )
             return
 
         final_output = self.get_run_final_output(run_result)
         payload = self._parse_output(final_output)
-        if payload is None:
+        pending = bool(getattr(self, '_pending_trades', []))
+        if payload is None and not pending:
             self.record_decision(
                 ticker_name=event.ticker.name or event.ticker.symbol,
                 action='HOLD',
@@ -91,12 +99,16 @@ class OpenAIRelatedMarketAgentStrategy(AgentStrategy):
             )
             return
 
+        payload = payload or {}
+
         action = str(payload.get('action', 'hold')).lower()
         side = str(payload.get('side', 'yes')).lower()
         target_symbol = str(payload.get('target_symbol') or event.ticker.symbol)
         try:
             confidence = float(payload.get('confidence', 0.0) or 0.0)
         except (TypeError, ValueError):
+            confidence = 0.0
+        if not math.isfinite(confidence):
             confidence = 0.0
         reasoning = str(payload.get('reasoning', ''))
 
@@ -105,7 +117,7 @@ class OpenAIRelatedMarketAgentStrategy(AgentStrategy):
         if side not in {'yes', 'no'}:
             side = 'yes'
 
-        if action == 'hold':
+        if action == 'hold' and not pending:
             self.record_decision(
                 ticker_name=event.ticker.name or event.ticker.symbol,
                 action='HOLD',
@@ -117,7 +129,7 @@ class OpenAIRelatedMarketAgentStrategy(AgentStrategy):
             return
 
         target_ticker = context.resolve_trade_ticker(target_symbol, side)
-        if target_ticker is None:
+        if target_ticker is None and not pending:
             self.record_decision(
                 ticker_name=event.ticker.name or event.ticker.symbol,
                 action='HOLD',
@@ -128,40 +140,59 @@ class OpenAIRelatedMarketAgentStrategy(AgentStrategy):
             )
             return
 
-        executed = False
-        recorded_action = 'HOLD'
-        if action == 'buy':
-            best_ask = trader.market_data.get_best_ask(target_ticker)
-            if best_ask is not None:
-                result = await trader.place_order(
-                    side=TradeSide.BUY,
-                    ticker=target_ticker,
-                    limit_price=best_ask.price,
-                    quantity=self.trade_size,
-                )
-                executed = result.order is not None and result.order.filled_quantity > 0
-                recorded_action = 'BUY_YES' if side == 'yes' else 'BUY_NO'
-        elif action == 'sell':
+        # Both representations use one submission path. Tool requests take
+        # precedence, even when the final JSON repeats a buy/sell instruction.
+        if not pending and target_ticker is not None:
+            quote = (
+                trader.market_data.get_best_ask(target_ticker)
+                if action == 'buy'
+                else trader.market_data.get_best_bid(target_ticker)
+            )
             position = trader.position_manager.get_position(target_ticker)
-            best_bid = trader.market_data.get_best_bid(target_ticker)
-            if position is not None and position.quantity > 0 and best_bid is not None:
-                result = await trader.place_order(
-                    side=TradeSide.SELL,
-                    ticker=target_ticker,
-                    limit_price=best_bid.price,
-                    quantity=position.quantity,
+            quantity = (
+                self.trade_size
+                if action == 'buy'
+                else (position.quantity if position is not None else Decimal('0'))
+            )
+            if quote is None or quantity <= 0:
+                self.record_decision(
+                    ticker_name=target_ticker.name or target_ticker.symbol,
+                    action='HOLD',
+                    executed=False,
+                    reasoning='No executable quote or position for the requested action',
+                    confidence=confidence,
+                    signal_values={},
                 )
-                executed = result.order is not None and result.order.filled_quantity > 0
-                recorded_action = 'SELL_YES' if side == 'yes' else 'SELL_NO'
+                return
+            self.queue_trade(
+                TradeRequest(
+                    target_ticker.symbol, action, float(quantity), float(quote.price)
+                ),
+                context=context,
+            )
 
-        self.record_decision(
-            ticker_name=target_ticker.name or target_ticker.symbol,
-            action=recorded_action,
-            executed=executed,
-            reasoning=reasoning or final_output[:200],
-            confidence=confidence,
-            signal_values={},
-        )
+        outcomes = await self.execute_pending_trades(context=context)
+        for outcome in outcomes:
+            execution = outcome.execution
+            actual_ticker = context.resolve_ticker(outcome.request.symbol)
+            is_no = actual_ticker is not None and any(
+                getattr(ticker, 'get_no_ticker', lambda: None)() == actual_ticker
+                for ticker in context.available_tickers(include_complements=False)
+            )
+            self.record_decision(
+                ticker_name=outcome.request.symbol,
+                action=f'{outcome.request.side.upper()}_{"NO" if is_no else "YES"}',
+                executed=outcome.executed,
+                reasoning=(
+                    f'{reasoning or final_output[:200]}; '
+                    f'execution: {execution.failure_reason or "confirmed full fill"}'
+                ),
+                confidence=confidence,
+                signal_values={
+                    'fully_filled': float(execution.success),
+                    'requires_reconciliation': float(execution.requires_reconciliation),
+                },
+            )
 
     @staticmethod
     def _parse_output(output: str) -> dict[str, object] | None:

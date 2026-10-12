@@ -189,6 +189,7 @@ def test_research_grid_with_params_jsonl(monkeypatch, tmp_path: Path) -> None:
     def fake_run_backtest_once(**kwargs):
         return {
             'total_trades': 2,
+            'valuation_complete': True,
             'total_pnl': str(Decimal('12.5')),
             'sharpe_ratio': '1.0',
             'win_rate': '0.5',
@@ -313,6 +314,7 @@ def test_research_auto_tune_runs_end_to_end(monkeypatch, tmp_path: Path) -> None
             dd = Decimal('0.08')
         return {
             'total_trades': 4,
+            'valuation_complete': True,
             'total_pnl': str(pnl),
             'sharpe_ratio': '0.8',
             'win_rate': '0.5',
@@ -375,6 +377,7 @@ def test_research_auto_tune_supports_single_strategy_gate(
         pnl = Decimal('1.0') if entry == 2 else Decimal('-0.5')
         return {
             'total_trades': 3,
+            'valuation_complete': True,
             'total_pnl': str(pnl),
             'sharpe_ratio': '0.6',
             'win_rate': '0.5',
@@ -446,11 +449,23 @@ def test_research_auto_tune_requires_strategy_ref(tmp_path: Path) -> None:
 def test_research_compare_runs_and_memory(tmp_path: Path) -> None:
     runs_file = tmp_path / 'runs.jsonl'
     runs_rows = [
-        {'name': 'low', 'ok': True, 'metrics': {'total_pnl': '1.0', 'win_rate': '0.5'}},
+        {
+            'name': 'low',
+            'ok': True,
+            'metrics': {
+                'total_pnl': '1.0',
+                'win_rate': '0.5',
+                'valuation_complete': True,
+            },
+        },
         {
             'name': 'high',
             'ok': True,
-            'metrics': {'total_pnl': '8.0', 'win_rate': '0.6'},
+            'metrics': {
+                'total_pnl': '8.0',
+                'win_rate': '0.6',
+                'valuation_complete': True,
+            },
         },
     ]
     runs_file.write_text(
@@ -527,6 +542,7 @@ def test_research_markets_and_walk_forward_target_runs(
     def fake_run_backtest_once(**kwargs):
         return {
             'total_trades': 5,
+            'valuation_complete': True,
             'total_pnl': '10.0',
             'sharpe_ratio': '0.8',
             'win_rate': '0.6',
@@ -603,6 +619,7 @@ def test_research_walk_forward_auto_resizes(monkeypatch, tmp_path: Path) -> None
     def fake_run_backtest_once(**kwargs):
         return {
             'total_trades': 2,
+            'valuation_complete': True,
             'total_pnl': '1.0',
             'sharpe_ratio': '0.2',
             'win_rate': '0.5',
@@ -683,6 +700,7 @@ def test_research_markets_filters_and_alpha_score(tmp_path: Path) -> None:
                             'total_pnl': '50',
                             'max_drawdown': '0.20',
                             'total_trades': 50,
+                            'valuation_complete': True,
                         },
                     }
                 ),
@@ -694,6 +712,7 @@ def test_research_markets_filters_and_alpha_score(tmp_path: Path) -> None:
                             'total_pnl': '40',
                             'max_drawdown': '0.02',
                             'total_trades': 10,
+                            'valuation_complete': True,
                         },
                     }
                 ),
@@ -732,6 +751,7 @@ def test_research_grid_supports_alpha_score_sort(monkeypatch, tmp_path: Path) ->
         if threshold <= 0.1:
             return {
                 'total_trades': 5,
+                'valuation_complete': True,
                 'total_pnl': '10.0',
                 'sharpe_ratio': '0.6',
                 'win_rate': '0.5',
@@ -739,6 +759,7 @@ def test_research_grid_supports_alpha_score_sort(monkeypatch, tmp_path: Path) ->
             }
         return {
             'total_trades': 5,
+            'valuation_complete': True,
             'total_pnl': '9.0',
             'sharpe_ratio': '0.7',
             'win_rate': '0.6',
@@ -795,6 +816,7 @@ def test_research_alpha_pipeline(monkeypatch, tmp_path: Path) -> None:
     def fake_run_backtest_once(**kwargs):
         return {
             'total_trades': 8,
+            'valuation_complete': True,
             'total_pnl': '12.0',
             'sharpe_ratio': '0.7',
             'win_rate': '0.55',

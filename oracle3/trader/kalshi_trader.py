@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
-import uuid
 from decimal import Decimal
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from oracle3.data.market_data_manager import MarketDataManager
@@ -37,9 +38,14 @@ class KalshiTrader(Trader):
         private_key_path: str | None = None,
         commission_rate: Decimal = Decimal('0.0'),
         alerter: Alerter | None = None,
+        journal_path: str | Path | None = None,
+        journal_namespace: str = 'kalshi',
     ):
         super().__init__(market_data, risk_manager, position_manager, alerter=alerter)
-        self.commission_rate = commission_rate
+        self.commission_rate = (
+            commission_rate  # Legacy argument; actual fees come from fills.
+        )
+        self._init_order_journal(journal_path, journal_namespace)
 
         from kalshi_python import Configuration
         from kalshi_python.api.portfolio_api import PortfolioApi
@@ -69,6 +75,7 @@ class KalshiTrader(Trader):
         ticker: KalshiTicker,
         price_cents: int,
         count: int,
+        client_order_id: str,
     ) -> dict[str, Any]:
         """Submit an order to Kalshi API."""
         from kalshi_python import CreateOrderRequest
@@ -79,7 +86,7 @@ class KalshiTrader(Trader):
             'side': side,
             'type': 'limit',
             'count': count,
-            'client_order_id': str(uuid.uuid4()),
+            'client_order_id': client_order_id,
         }
         if side == 'no':
             kwargs['no_price'] = price_cents
@@ -96,16 +103,56 @@ class KalshiTrader(Trader):
             return response.to_dict()
         return response if isinstance(response, dict) else {'order': response}
 
-    async def _get_order_status(self, order_id: str) -> dict[str, Any]:
-        """Get order details from Kalshi API."""
-        response = await asyncio.to_thread(
-            lambda: self._portfolio_api.get_order(order_id)
-        )
-        if hasattr(response, 'to_dict'):
-            return response.to_dict()
-        return response if isinstance(response, dict) else {}
+    @staticmethod
+    def _response_order_id(response: dict[str, Any]) -> str:
+        data = response.get('order', response)
+        return str(data.get('order_id') or '')
 
-    async def _process_order_response(
+    @staticmethod
+    def _recovery_response(venue_id: str) -> dict[str, Any]:
+        return {'order': {'order_id': venue_id}}
+
+    async def _submit_live_order(
+        self,
+        side: TradeSide,
+        ticker: Ticker,
+        price: Decimal,
+        quantity: Decimal,
+        client_order_id: str,
+    ) -> dict[str, Any]:
+        if not isinstance(ticker, KalshiTicker):
+            raise ValueError('invalid Kalshi ticker')
+        return await self._submit_order(
+            action=side.value,
+            side='no' if ticker.is_no_side else 'yes',
+            ticker=ticker,
+            price_cents=int(price * 100),
+            count=int(quantity),
+            client_order_id=client_order_id,
+        )
+
+    async def _get_order_status(self, order_id: str) -> dict[str, Any]:
+        # The installed generated model can discard modern *_fp / *_dollars
+        # execution fields. Read raw JSON through the authenticated SDK instead.
+        def fetch() -> dict[str, Any]:
+            response = self._portfolio_api.get_order_without_preload_content(order_id)
+            try:
+                return json.loads(response.read())
+            finally:
+                response.release_conn()
+
+        return await asyncio.to_thread(fetch)
+
+    @staticmethod
+    def _decimal(value: Any, name: str) -> Decimal:
+        if value is None or isinstance(value, bool):
+            raise ValueError(f'missing or invalid {name}')
+        parsed = Decimal(str(value))
+        if not parsed.is_finite() or parsed < 0:
+            raise ValueError(f'invalid {name}')
+        return parsed
+
+    async def _process_order_response(  # noqa: C901
         self,
         response: dict[str, Any],
         side: TradeSide,
@@ -113,84 +160,119 @@ class KalshiTrader(Trader):
         limit_price: Decimal,
         quantity: Decimal,
     ) -> Order:
-        """Process Kalshi order response into internal Order object."""
-        logger.info('Kalshi order response: %s', response)
-
-        order_data = response.get('order', response)
-        order_id = order_data.get('order_id', '')
-
-        if not order_id:
-            return Order(
-                status=OrderStatus.REJECTED,
-                side=side,
-                ticker=ticker,
-                limit_price=limit_price,
-                filled_quantity=Decimal('0'),
-                average_price=Decimal('0'),
-                trades=[],
-                remaining=quantity,
-                commission=Decimal('0'),
+        if not isinstance(ticker, KalshiTicker):
+            raise ValueError('invalid Kalshi ticker')
+        venue_id = self._response_order_id(response)
+        if not venue_id:
+            return self._unknown_order(
+                side,
+                ticker,
+                limit_price,
+                quantity,
+                '',
+                reason='submission lacks venue order ID',
             )
-
-        # Get updated order status
-        order_details = await self._get_order_status(order_id)
-        order_detail = order_details.get('order', order_details)
-        logger.info('Kalshi order details: %s', order_detail)
-
-        total_count = int(order_detail.get('count', 0))
-        remaining_count = int(order_detail.get('remaining_count', 0))
-        filled_count = total_count - remaining_count
-
-        if filled_count == 0:
-            return Order(
-                status=OrderStatus.REJECTED,
-                side=side,
-                ticker=ticker,
-                limit_price=limit_price,
-                filled_quantity=Decimal('0'),
-                average_price=Decimal('0'),
-                trades=[],
-                remaining=quantity,
-                commission=Decimal('0'),
+        details = await self._get_order_status(venue_id)
+        data = details.get('order', details)
+        if data.get('order_id') != venue_id:
+            raise ValueError('order ID mismatch')
+        if data.get('ticker') != ticker.market_ticker:
+            raise ValueError('market mismatch')
+        if data.get('action') != side.value:
+            raise ValueError('action mismatch')
+        expected_side = 'no' if ticker.is_no_side else 'yes'
+        if data.get('side') != expected_side:
+            raise ValueError('outcome mismatch')
+        remaining = self._decimal(
+            data.get('remaining_count_fp', data.get('remaining_count')),
+            'remaining_count',
+        )
+        initial_value = data.get('initial_count_fp', data.get('count'))
+        initial = self._decimal(initial_value, 'initial_count')
+        if initial != quantity:
+            raise ValueError('requested quantity mismatch')
+        fill_value = data.get('fill_count_fp', data.get('fill_count'))
+        # Cancellation can make remaining zero without filling the order.
+        # Never infer executed contracts from original minus remaining.
+        filled = self._decimal(fill_value, 'fill_count')
+        if not 0 <= filled <= quantity or not 0 <= remaining <= quantity:
+            raise ValueError('invalid filled or remaining quantity')
+        status = str(data.get('status', '')).lower()
+        if status in {'resting', 'pending'}:
+            if filled + remaining != quantity:
+                raise ValueError('inconsistent open order quantities')
+            internal_status = (
+                OrderStatus.PARTIALLY_FILLED if filled else OrderStatus.PLACED
             )
-
-        filled_quantity = Decimal(str(filled_count))
-        filled_price = limit_price
-        remaining = Decimal(str(remaining_count))
-        commission = filled_quantity * filled_price * self.commission_rate
-
-        trade = Trade(
-            side=side,
-            ticker=ticker,
-            price=filled_price,
-            quantity=filled_quantity,
-            commission=commission,
-        )
-
-        order_status = (
-            OrderStatus.FILLED if remaining_count == 0 else OrderStatus.PARTIALLY_FILLED
-        )
-
+        elif status == 'executed':
+            if filled != quantity or remaining != 0:
+                raise ValueError('executed order is not fully filled')
+            internal_status = OrderStatus.FILLED
+        elif status in {'canceled', 'cancelled'}:
+            internal_status = OrderStatus.CANCELLED
+        elif status == 'rejected' and filled == 0:
+            internal_status = OrderStatus.REJECTED
+        else:
+            return self._unknown_order(
+                side,
+                ticker,
+                limit_price,
+                quantity,
+                '',
+                venue_id,
+                'unrecognized venue order state',
+            )
+        price, fees, trades = Decimal('0'), Decimal('0'), []
+        if filled:
+            # These are cumulative actual execution amounts, not limit-price estimates.
+            cost = sum(
+                (
+                    self._decimal(data.get(key), key)
+                    for key in ('maker_fill_cost_dollars', 'taker_fill_cost_dollars')
+                ),
+                Decimal('0'),
+            )
+            fees = sum(
+                (
+                    self._decimal(data.get(key), key)
+                    for key in ('maker_fees_dollars', 'taker_fees_dollars')
+                ),
+                Decimal('0'),
+            )
+            price = cost / filled
+            if (
+                not 0 < price <= 1
+                or (side == TradeSide.BUY and price > limit_price)
+                or (side == TradeSide.SELL and price < limit_price)
+            ):
+                raise ValueError(
+                    'execution price violates limit or binary price bounds'
+                )
+            trades = [
+                Trade(
+                    side,
+                    ticker,
+                    price,
+                    filled,
+                    fees,
+                    venue_order_id=venue_id,
+                    fee_source='venue cumulative execution amounts',
+                )
+            ]
         return Order(
-            status=order_status,
-            side=side,
-            ticker=ticker,
-            limit_price=limit_price,
-            filled_quantity=filled_quantity,
-            average_price=filled_price,
-            trades=[trade],
-            remaining=remaining,
-            commission=commission,
+            internal_status,
+            side,
+            ticker,
+            limit_price,
+            filled,
+            price,
+            trades,
+            remaining,
+            fees,
+            venue_order_id=venue_id,
         )
 
-    async def _alert_rejected(self, reason: OrderFailureReason, ticker: Ticker) -> None:
-        if self.alerter:
-            try:
-                await self.alerter.on_order_rejected(reason, ticker)
-            except Exception:
-                logger.debug('alerter.on_order_rejected() failed', exc_info=True)
-
-    async def place_order(  # noqa: C901
+    async def place_order(
         self,
         side: TradeSide,
         ticker: Ticker,
@@ -198,99 +280,17 @@ class KalshiTrader(Trader):
         quantity: Decimal,
         client_order_id: str | None = None,
     ) -> PlaceOrderResult:
-        guard_failure = self._check_order_guard(client_order_id)
-        if guard_failure is not None:
-            await self._alert_rejected(guard_failure, ticker)
-            return PlaceOrderResult(order=None, failure_reason=guard_failure)
-
-        # Validate inputs
-        if quantity <= 0 or limit_price <= 0:
-            await self._alert_rejected(OrderFailureReason.INVALID_ORDER, ticker)
-            return PlaceOrderResult(
-                order=None,
-                failure_reason=OrderFailureReason.INVALID_ORDER,
-            )
-
         if not isinstance(ticker, KalshiTicker) or not ticker.market_ticker:
-            await self._alert_rejected(OrderFailureReason.INVALID_ORDER, ticker)
-            return PlaceOrderResult(
-                order=None,
-                failure_reason=OrderFailureReason.INVALID_ORDER,
-            )
-
-        # Don't allow short selling
-        if side == TradeSide.SELL:
-            position = self.position_manager.get_position(ticker)
-            if position is None or position.quantity < quantity:
-                await self._alert_rejected(OrderFailureReason.INVALID_ORDER, ticker)
-                return PlaceOrderResult(
-                    order=None,
-                    failure_reason=OrderFailureReason.INVALID_ORDER,
-                )
-
-        # Check cash
-        if side == TradeSide.BUY:
-            cash_position = self.position_manager.get_position(ticker.collateral)
-            cash_required = (
-                quantity * limit_price * (Decimal('1') + self.commission_rate)
-            )
-            if cash_position is None or cash_position.quantity < cash_required:
-                logger.warning(
-                    'Insufficient cash for %s: need %s, have %s',
-                    ticker.symbol,
-                    cash_required,
-                    cash_position.quantity if cash_position else 0,
-                )
-                await self._alert_rejected(OrderFailureReason.INSUFFICIENT_CASH, ticker)
-                return PlaceOrderResult(
-                    order=None,
-                    failure_reason=OrderFailureReason.INSUFFICIENT_CASH,
-                )
-
-        # Risk check
-        if not await self.risk_manager.check_trade(ticker, side, quantity, limit_price):
-            await self._alert_rejected(OrderFailureReason.RISK_CHECK_FAILED, ticker)
-            return PlaceOrderResult(
-                order=None,
-                failure_reason=OrderFailureReason.RISK_CHECK_FAILED,
-            )
-
-        try:
-            # Convert internal price (0.01-0.99) to Kalshi cents (1-99)
-            price_cents = int(limit_price * 100)
-            count = int(quantity)
-
-            action = 'buy' if side == TradeSide.BUY else 'sell'
-
-            # Determine Kalshi API side based on ticker
-            kalshi_side = 'no' if isinstance(ticker, KalshiTicker) and ticker.is_no_side else 'yes'
-
-            response = await self._submit_order(
-                action=action,
-                side=kalshi_side,
-                ticker=ticker,
-                price_cents=price_cents,
-                count=count,
-            )
-
-            order = await self._process_order_response(
-                response, side, ticker, limit_price, quantity
-            )
-
-            # Update positions
-            for trade in order.trades:
-                self.position_manager.apply_trade(trade)
-
-            self.orders.append(order)
-            if order.status == OrderStatus.REJECTED:
-                failure_reason = OrderFailureReason.UNKNOWN
-                await self._alert_rejected(failure_reason, ticker)
-                return PlaceOrderResult(order=order, failure_reason=failure_reason)
-            return PlaceOrderResult(order=order)
-
-        except Exception as e:
-            logger.exception('Error placing Kalshi order for %s: %s', ticker.symbol, e)
-            return PlaceOrderResult(
-                order=None,
-                failure_reason=OrderFailureReason.UNKNOWN,
-            )
+            return PlaceOrderResult(failure_reason=OrderFailureReason.INVALID_ORDER)
+        if not self._valid_live_inputs(side, limit_price, quantity):
+            return PlaceOrderResult(failure_reason=OrderFailureReason.INVALID_ORDER)
+        # This SDK's submission schema is integer contracts and integer cents.
+        # Reject unsupported precision rather than silently truncating the request.
+        if (
+            quantity != quantity.to_integral_value()
+            or limit_price * 100 != (limit_price * 100).to_integral_value()
+        ):
+            return PlaceOrderResult(failure_reason=OrderFailureReason.INVALID_ORDER)
+        return await self._place_live_order(
+            side, ticker, limit_price, quantity, client_order_id
+        )
