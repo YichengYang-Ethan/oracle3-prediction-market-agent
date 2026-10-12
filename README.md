@@ -2,56 +2,33 @@
 
 # Oracle3
 
-**Agent tools and execution infrastructure for prediction markets.**
+**Build prediction-market agents that discover markets, analyze opportunities, and test strategies.**
 
-Give your agent Kalshi and Polymarket market data, fee-aware checks on related contracts, and a local paper-trading ledger through MCP. Build strategies with the Python API and trading engine, and replay tool errors and incomplete execution with an offline contract harness.
+Connect AI agents to Kalshi and Polymarket through MCP. Give them reusable Skills for market research and strategy development, then build on a Python engine for paper and live execution.
+
+**13 MCP tools · 6 agent Skills · Kalshi & Polymarket data · Python 3.10+**
 
 [![Tests](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/actions/workflows/pytest.yml/badge.svg)](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/actions/workflows/pytest.yml)
+[![GitHub stars](https://img.shields.io/github/stars/YichengYang-Ethan/oracle3-prediction-market-agent?style=social)](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/stargazers)
 [![PyPI](https://img.shields.io/pypi/v/oracle3)](https://pypi.org/project/oracle3/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20062548.svg)](https://doi.org/10.5281/zenodo.20062548)
 
-[Research overview and evidence](docs/research-review.md) · [Agent quickstart](docs/agent-quickstart.md) · [MCP tools](docs/mcp.md) · [Documentation](https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/) · [Machine-readable index](llms.txt) · [Contributing](.github/CONTRIBUTING.md)
+[Quickstart](#quickstart) · [MCP tools](docs/mcp.md) · [Agent Skills](#reusable-agent-skills) · [Project and contributions](docs/research-review.md) · [Documentation](https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/)
 
-## When to use Oracle3
+## Why Oracle3
 
-| Your task | Start here | What you get |
-|---|---|---|
-| Find Kalshi or Polymarket contracts and inspect their metadata | `search_markets` → `get_market` | Market identifiers, prices and available rule fields |
-| Check whether a related-contract price gap survives fees | `check_constraint` or `check_constraint_live` | Candidate baskets, per-leg fees, gross/net edge and calculation assumptions |
-| Simulate a trade with current order-book data | `paper_order` → `paper_portfolio` | Fills and positions in a local JSON ledger |
-| Test how a tool or executor handles failure | [Contract harness](docs/agent-harness.md) | Frozen cases for errors, partial fills, recovery and unresolved exposure |
-| Build a strategy or operate a trading engine | [Python modules](#architecture-and-extensions), [CLI](#cli-and-agent-skills) | Strategy interfaces, paper/live adapters and risk controls |
+- **A connected research workflow.** Discover contracts, inspect their rules and order books, compare related outcomes, and track simulated positions.
+- **Calculations that include trading costs.** Five relationship checks return candidate baskets, per-leg fees, and calculated net edge.
+- **Tools and workflows for agents.** Use MCP for structured access and Skills for repeatable research, strategy authoring, and operations.
+- **An engine you can extend.** Build strategies with Python interfaces, risk controls, and paper/live venue adapters.
+- **A foundation for experiments.** Reproducible software checks, automated tests, and installed-package validation make the implementation inspectable.
 
-Public MCP market reads need no exchange credentials. Pure calculations and the contract harness run without network access after installation. MCP tools do not place real orders; live trading is a separate CLI/Python workflow.
+Public Kalshi and Polymarket market reads need no exchange credentials. MCP provides market data, calculations, and a local paper ledger; real-order execution uses the separate CLI/Python engine.
 
-## Connect an agent
+## Quickstart
 
-Requires Python 3.10+ and an MCP client. With [uv](https://docs.astral.sh/uv/getting-started/installation/) installed, add the **released PyPI package** to Claude Code:
-
-```bash
-claude mcp add oracle3 -- uvx --from oracle3 oracle3-mcp
-```
-
-For clients supporting an `mcpServers` configuration:
-
-```json
-{
-  "mcpServers": {
-    "oracle3": { "command": "uvx", "args": ["--from", "oracle3", "oracle3-mcp"] }
-  }
-}
-```
-
-The client launches the stdio server. Running `oracle3 mcp` manually waits for protocol input; it is not an interactive trading prompt. If you use pip instead, install `oracle3` in a virtual environment and point your client at that environment's `oracle3-mcp` executable.
-
-**First task:** ask your agent to call `list_relation_types`, then calculate an `implication` check for synthetic contracts A and B: A has YES bid 0.60, B has YES ask 0.55, both use the default Kalshi schedule, and the size is 100 contracts. Request the basket, fees, net edge and assumptions. This uses no market API or ledger. See the [exact tool arguments and expected result](docs/agent-quickstart.md).
-
-**Release versus main:** the install above uses a published package. This README also describes development code: the explicit `assessment` fields and offline harness were added after the 1.2.2 release. Use the checkout below for those examples; installing a release does not install the repository's `scripts/` or `skills/` directories. The [changelog](CHANGELOG.md) records release history.
-
-## Try a reproducible check
-
-Install the development checkout in a virtual environment:
+Install the current development checkout:
 
 ```bash
 git clone https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent.git
@@ -60,151 +37,101 @@ python -m venv .venv
 .venv/bin/python -m pip install -e .
 ```
 
-On Windows, use `.venv\Scripts\python.exe`. To run this checkout through MCP, configure the absolute path to `.venv/bin/oracle3-mcp` (`.venv\Scripts\oracle3-mcp.exe` on Windows), with an empty `args` list. See [client setup](docs/agent-quickstart.md).
-
-Run the following with the environment's Python. A and B are synthetic identifiers; the implication is an input assumption.
-
-```python
-import json
-
-from oracle3.arbitrage import Quote, check_constraint
-from oracle3.fees import KalshiSchedule
-
-result = check_constraint(
-    'implication',
-    [
-        Quote('A', yes_bid=0.60, schedule=KalshiSchedule()),
-        Quote('B', yes_ask=0.55, schedule=KalshiSchedule()),
-    ],
-    contracts=100,
-).to_dict()
-
-best = result['best']
-assert best is not None
-print(json.dumps({
-    'basket': best['description'],
-    'gross_edge': best['gross_edge'],
-    'fees': best['fees'],
-    'net_edge': best['net_edge'],
-    'assessment': result['assessment'],
-}, indent=2))
-```
-
-Expected output, in dollars for 100 contracts per leg:
-
-```json
-{
-  "basket": "NO on A + YES on B",
-  "gross_edge": 5.0,
-  "fees": 3.4125,
-  "net_edge": 1.5875,
-  "assessment": {
-    "relation_verified": false,
-    "execution_verified": false,
-    "conditional_on_relation": true
-  }
-}
-```
-
-The positive edge is conditional on the supplied relationship and full fills at the supplied prices. It is a worked calculation, not an observed trading return. A missing executable quote can produce `best: null`; callers must inspect `missing_quotes` before using a basket.
-
-## From market discovery to an informed decision
-
-For a live-data research task, an agent can:
-
-1. **Discover:** call `search_markets` on Kalshi and Polymarket for candidate contracts.
-2. **Read the rules:** call `get_market` for each candidate. Kalshi responses include `rules_primary` and `rules_secondary`; Polymarket responses include `rules` and `resolution_source` from the upstream market details. Compare outcome definitions, dates, settlement sources and any void/cancellation terms. Check the venue's market page when fields are missing or ambiguous, and leave unresolved relationships unverified.
-3. **State the relationship:** choose `implication`, `exclusivity`, `complement`, `same_event` or `event_sum`, with the evidence supporting that choice. Event sums require mutually exclusive outcomes covering every possible result.
-4. **Calculate:** call `check_constraint_live` for current quotes and fee schedules. Inspect `best`, `missing_quotes`, per-leg costs and net edge; use `get_orderbook` to inspect available size.
-5. **Report:** return market IDs, the assumed relationship, the quoted prices, fees, size and unresolved limitations. A positive check does not verify settlement equivalence or execution.
-
-Paper trading is a separate, explicit next step: `paper_order` writes to a local ledger using live book data; `paper_portfolio` reads it. The MCP ledger is separate from the trading engine's paper state. `paper_reset` erases that ledger and requires `confirm=true`.
-
-[All 13 MCP tools and arguments](docs/mcp.md) · [Agent task recipes](docs/agent-quickstart.md)
-
-## Reliability you can inspect
-
-For a short review, see the [research overview](docs/research-review.md): contribution boundaries, three replayable before/after failures, and a proposed agent evaluation. The comparison uses actual earlier and repaired Oracle3 commits with identical offline probes.
-
-The agent-facing contract harness runs nine frozen scenarios through the real MCP dispatcher, constraint checker and sequential spread executor, using mocked venue responses and a scripted trader.
-
-| Scenario | Behavior checked |
-|---|---|
-| Invalid input or venue error | An error remains visible to the caller |
-| A thin price gap | Fees can remove the apparent opportunity |
-| An unverified relationship | The output preserves conditional assumptions |
-| Partial execution | Incomplete fills do not count as a completed basket |
-| Failed or uncertain recovery | Residual exposure and reconciliation requirements remain visible |
-
-From the checkout above:
+Connect it to Claude Code from this directory:
 
 ```bash
-.venv/bin/python scripts/check_agent_contracts.py --output agent-contracts.json
+claude mcp add oracle3 -- "$PWD/.venv/bin/oracle3-mcp"
 ```
 
-The runner blocks socket connections, needs no credentials, writes JSON evidence, and exits nonzero on a failed case. [CI](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/actions/workflows/pytest.yml) runs it with the locked dependencies and latest supported MCP SDK and uploads the reports. CI also installs the built wheel outside the checkout and verifies the real stdio MCP handshake, tool listing, call and shutdown on SDK 1.x and 2.x. The wider suite covers accounting, concurrent paper-ledger writes, request deduplication and execution recovery; see the [tests](tests/).
+For other MCP clients, configure the absolute path to `.venv/bin/oracle3-mcp` as the command with an empty argument list. On Windows, use `.venv\Scripts\python.exe` and `.venv\Scripts\oracle3-mcp.exe`.
 
-This is deterministic regression coverage for the tool environment. LLM reasoning, Skill effectiveness and trading profitability require separate evaluations. `SpreadExecutor` submits sequential orders, exposes fills and recovery attempts, and retains uncertainty; it does not provide atomic multi-venue transactions or durable recovery after process loss. Implication, exclusivity, conditional and structural strategies now use shared fees and explicit basket state; other strategies remain unevenly integrated.
+[Client configuration and first tool call](docs/agent-quickstart.md) · [Published-package installation](docs/mcp.md)
 
-[Case definitions and output contract](docs/agent-harness.md) · [Runtime integrity and migration](docs/runtime-integrity.md)
+### Give your agent a first task
 
-## CLI and agent skills
+> Find Kalshi and Polymarket contracts about the next Fed rate decision. Compare their outcome definitions, resolution rules, and order-book quotes. Summarize the markets with their IDs, prices, and the assumptions needed to compare them.
 
-After installing the package, query markets from scripts or a terminal:
+For a calculation that works offline after installation:
 
-```bash
-oracle3 market search --exchange kalshi --query "fed" --json
-oracle3 market search --exchange polymarket --query "fed decision" --json
-```
+> Use Oracle3 to check an implication: A implies B. A has a YES bid of $0.60 and B has a YES ask of $0.55. Use the default Kalshi taker fee schedule and 100 contracts per leg. Show the basket, gross edge, fees, and net edge.
 
-The CLI also operates the paper/live engine and inspects running sessions. See [command access and side effects](AGENTS.md) and the [CLI monitoring guide](docs/CLI_MONITORING.md). Live trading requires venue credentials, a configured strategy and explicit user authorization; it is not part of the MCP quickstart.
+The synthetic example returns **$5.00 gross edge − $3.4125 fees = $1.5875 calculated net edge**, conditional on the supplied implication and quotes. [See exact inputs and output](docs/agent-quickstart.md#first-call-a-deterministic-fee-check).
 
-Six [repository skills](skills/) cover constraint checks, data discovery, quantitative strategy authoring, agent strategy authoring, paper operations and live operations. Claude Code project copies are included in [`.claude/skills/`](.claude/skills/); open the checkout as your project to use them. For another client, use its supported skill installation mechanism or load the selected `SKILL.md` as workflow context. [Choose a skill and set it up](docs/agent-quickstart.md#agent-skills).
+## What agents can do
 
-## Architecture and extensions
-
-| Component | Responsibility | Current boundary |
+| Task | Tools | Result |
 |---|---|---|
-| [`oracle3.mcp_server`](oracle3/mcp_server/) | Public Kalshi/Polymarket data, calculations and local paper ledger | No real-money order tool; Solana is not an MCP venue |
-| [`oracle3.arbitrage`](oracle3/arbitrage.py) + [`oracle3.fees`](oracle3/fees.py) | Five relationship checks with per-leg fee schedules | The caller supplies the relation; checks do not prove rules, depth or fills |
-| [`oracle3.strategy`](oracle3/strategy/) + [`oracle3.trader`](oracle3/trader/) | Strategy interfaces, paper/live traders for Kalshi, Polymarket and Solana (DFlow), spread execution | Fee unification and spread-executor integration across strategies are incomplete |
-| [`oracle3.pricing`](oracle3/pricing/) | Optional Wang-transform models and estimators | Model-implied probabilities depend on assumptions; a fitted relation is not a logical constraint |
-| [`oracle3-extras`](https://github.com/YichengYang-Ethan/oracle3-extras) | Optional venue/data/wallet integrations and experiments | Separate installation and configuration; matched-market candidates still need rule review |
+| Discover markets | `search_markets`, `get_market` | Contracts, metadata, and available resolution rules |
+| Inspect market conditions | `get_quote`, `get_orderbook` | Prices, fee information, and displayed depth |
+| Analyze related contracts | `check_constraint`, `check_constraint_live` | Baskets and net edge under a stated relationship |
+| Calculate fees and model values | `trading_fee`, `fair_value` | Fee estimates and parameterized model outputs |
+| Try a paper entry | `paper_order`, `paper_portfolio` | Simulated fills and holdings in a local ledger |
 
-The strategy collection includes logical-relation, fitted/statistical and model-driven approaches. Their assumptions and integration status differ. The pricing module's independent-forecast comparison is described in the [migration notes](docs/agent-harness.md#model-comparisons); the underlying research is in the [working paper](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6468338) and [replication package](https://github.com/YichengYang-Ethan/prediction-market-pricing).
+Relationship checks cover **implication, exclusivity, complement, same event, and event sum**. They expose assumptions with their results, giving agents and researchers a common calculation layer.
 
-Fees are central to the checks: a visible price gap may disappear after both legs' costs. The [fee-frontier study](docs/research/fee-frontier.md) includes assumptions and a reproducible script. Live checks fetch market-specific schedules; synthetic checks use the schedules you supply or the documented defaults.
+[All 13 MCP tools](docs/mcp.md) · [Workflow examples](docs/agent-quickstart.md)
 
-New venue, data-provider and wallet integrations start in [oracle3-extras](https://github.com/YichengYang-Ethan/oracle3-extras), which includes Kairos candidate pairs and a MetaMask Agent Wallet adapter. See [extension setup and boundaries](docs/extras.md).
+## Reusable agent Skills
 
-## Roadmap and contributing
+The repository includes six workflows that help agents move from individual tool calls to complete tasks:
 
-The following are planned work, not current guarantees:
+| Skill | Use it to |
+|---|---|
+| [Data discovery](skills/pm-data-discovery/SKILL.md) | Find markets and organize research inputs |
+| [Constraint arbitrage](skills/pm-constraint-arbitrage/SKILL.md) | Examine related contracts and calculate fee-aware baskets |
+| [Quant strategy authoring](skills/pm-quant-strategy-authoring/SKILL.md) | Develop strategies with Oracle3's Python interfaces |
+| [Agent strategy authoring](skills/pm-agent-strategy-authoring/SKILL.md) | Build agent-driven decision workflows |
+| [Paper operations](skills/pm-paper-trade-ops/SKILL.md) | Run and inspect simulated trading sessions |
+| [Live operations](skills/pm-live-trade-ops/SKILL.md) | Configure and operate the separate live engine |
 
-- **Agent reliability:** extend intent journaling to verified account-wide recovery, persist strategy ownership, and expand replayable adapter failure cases.
-- **Agent evaluation:** define labeled end-to-end tasks, model/Skill baselines and metrics for task completion, tool errors and unsupported conclusions.
-- **Execution integration:** extend shared fees and explicit basket states to remaining strategies; verify Polymarket net fee accounting and automated restart reconciliation.
-- **Market evidence:** measure fee-surviving gaps with timestamped data and publish reproducible forward observations with execution assumptions.
+Claude Code project copies are included in [`.claude/skills/`](.claude/skills/). Open the checkout as your project, or use your client's supported Skill installation mechanism. [Skill setup](docs/agent-quickstart.md#agent-skills).
 
-Useful contributions include a reproducible tool failure, a venue-adapter fixture, a client setup correction or a task with a checkable expected outcome. Start with the [contributing guide](.github/CONTRIBUTING.md), [open problems](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/issues?q=is%3Aissue+label%3Aopen-problem) or [Discussions](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/discussions). Coding agents should read [AGENTS.md](AGENTS.md).
+**For AI agents:** start with [`llms.txt`](llms.txt) for task routing, the [MCP reference](docs/mcp.md) for tool schemas, and [`AGENTS.md`](AGENTS.md) for contributing code.
 
-## Related work and citation
+## Build with Python and the CLI
 
-- [Coinjure / U Lab prediction-market-cli](https://github.com/ulab-uiuc/coinjure): upstream research and code; see attribution below.
-- [PMXT](https://github.com/pmxt-dev/pmxt): a unified prediction-market API.
-- [Prediction Market Analysis](https://github.com/Jon-Becker/prediction-market-analysis): data collection and analysis.
-- [Prediction Market Pricing](https://github.com/YichengYang-Ethan/prediction-market-pricing): companion pricing research and replication.
+Use the same project for research scripts, agent strategies, and engine operations:
 
-For software citation, use [CITATION.cff](CITATION.cff) and [Zenodo](https://doi.org/10.5281/zenodo.20062548). For the pricing model, cite the [working paper](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6468338).
+```bash
+.venv/bin/oracle3 market search --exchange kalshi --query "fed" --json
+.venv/bin/oracle3 market search --exchange polymarket --query "fed decision" --json
+```
+
+| Component | Build with it |
+|---|---|
+| [MCP server](oracle3/mcp_server/) | Structured market access and local paper operations for agents |
+| [Relations and fees](oracle3/arbitrage.py) | Shared calculations for related-contract strategies |
+| [Strategies](oracle3/strategy/) | Logical-relation, statistical, and model-driven approaches |
+| [Trading engine](oracle3/trader/) | Paper/live adapters for Kalshi, Polymarket, and Solana via DFlow |
+| [Pricing](oracle3/pricing/) | Wang-transform models and estimators for research |
+| [oracle3-extras](https://github.com/YichengYang-Ethan/oracle3-extras) | Optional venue, data-provider, and wallet integrations |
+
+[CLI guide](docs/CLI_MONITORING.md) · [Integration guide](docs/extras.md) · [Execution reference](docs/runtime-integrity.md)
+
+## Built for experimentation
+
+Oracle3 combines a concrete decision environment with structured tools, observable state, and a software validation harness. This supports work on agent interfaces, workflow guidance, and reproducible evaluation.
+
+[CI](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/actions/workflows/pytest.yml) runs automated tests and checks the built package through real MCP sessions on SDK 1.x and 2.x. The [harness documentation](docs/agent-harness.md) explains the reproducible checks. Model-level agent evaluation is a next research direction.
+
+[Project overview and Yicheng Yang's contributions](docs/research-review.md) · [Fee-frontier study](docs/research/fee-frontier.md) · [Companion pricing research](https://github.com/YichengYang-Ethan/prediction-market-pricing)
+
+## Contribute
+
+Help build better agent workflows, labeled evaluation tasks, strategy examples, and client integrations. New venue, data-provider, and wallet integrations start in [oracle3-extras](https://github.com/YichengYang-Ethan/oracle3-extras).
+
+[Contributing guide](.github/CONTRIBUTING.md) · [Open problems](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/issues?q=is%3Aissue+label%3Aopen-problem) · [Discussions](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/discussions)
 
 ## Origin and attribution
 
-Oracle3 began as `ulab-uiuc/oracle3`, developed by Yicheng Yang and Haofei Yu at U Lab (University of Illinois Urbana-Champaign) under the MIT License, and it bundles the [`coinjure`](https://github.com/ulab-uiuc/coinjure) package from the same lab. The [research overview](docs/research-review.md#origin-and-contribution-boundaries) distinguishes the inherited foundation from the extensions and reliability changes maintained here. See [NOTICE](NOTICE) for the retained license text.
+Oracle3 began as `ulab-uiuc/oracle3`, developed by Yicheng Yang and Haofei Yu at U Lab (University of Illinois Urbana-Champaign). It also bundles the lab's [Coinjure](https://github.com/ulab-uiuc/coinjure) package. Yicheng Yang continues to develop and maintain the extensions in this repository. [Read the project story and contributions](docs/research-review.md).
 
 We acknowledge the foundational work of the Coinjure team at the University of Illinois Urbana-Champaign—Haofei Yu, Yicheng Yang, Yuxiang Liu, and Prof. Jiaxuan You—on which Oracle3 builds.
 
+For software citation, use [CITATION.cff](CITATION.cff) and [Zenodo](https://doi.org/10.5281/zenodo.20062548). For the pricing model, see the [working paper](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6468338).
+
 ## License
 
-Apache 2.0; see [LICENSE](LICENSE). Portions from the original U Lab code remain under the MIT License reproduced in [NOTICE](NOTICE).
+Apache 2.0; see [LICENSE](LICENSE). Original U Lab and Coinjure portions retain their MIT license in [NOTICE](NOTICE).
 
 *This software is for research and education. Trading involves financial risk.*

@@ -40,6 +40,6 @@
 - [Open problems](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/issues?q=is%3Aissue+label%3Aopen-problem)
 - [Discussions](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/discussions)
 
-## Research review
+## Project background
 
-- [Research overview and reproducible evidence](https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/research-review/): contribution boundaries, three pinned-revision regressions and an unrun agent evaluation proposal. These are software traces, not model-level benchmark results.
+- [Project overview and contributions](https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/research-review/): Yicheng Yang's work at U Lab, Oracle3's extensions to the Coinjure foundation, MCP tools, reusable Skills, and directions for agent evaluation.

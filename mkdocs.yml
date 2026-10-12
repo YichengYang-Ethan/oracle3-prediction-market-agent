@@ -1,5 +1,5 @@
 site_name: Oracle3
-site_description: Agent tools and execution infrastructure for prediction markets. Kalshi and Polymarket data, fee-aware contract checks, local paper trading and offline execution regression through MCP and Python.
+site_description: Build prediction-market agents with Kalshi and Polymarket data, MCP tools, reusable Skills, fee-aware analysis, and Python strategy development.
 site_url: https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/
 repo_url: https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent
 repo_name: YichengYang-Ethan/oracle3-prediction-market-agent
@@ -50,7 +50,7 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Research overview: research-review.md
+  - Project overview: research-review.md
   - Agent quickstart: agent-quickstart.md
   - MCP server: mcp.md
   - Agent contract harness: agent-harness.md
