@@ -1,0 +1,1557 @@
+{
+  "baseline_scope": "Earlier Oracle3 before PR #67; not the Coinjure baseline.",
+  "comparisons": [
+    {
+      "case_id": "agent.queued_tool_request",
+      "expected_observations": {
+        "baseline": {
+          "decision_action": "HOLD",
+          "decision_executed": false,
+          "filled_quantities": [],
+          "order_count": 0,
+          "pending_count": 1
+        },
+        "fixed": {
+          "decision_action": "BUY_YES",
+          "decision_executed": true,
+          "filled_quantities": [
+            "10.0"
+          ],
+          "order_count": 1,
+          "pending_count": 0
+        }
+      },
+      "fixed_invariant_satisfied": true,
+      "historical_behavior_reproduced": true,
+      "invariant": "An accepted queued request reaches paper execution once, even when final text is HOLD.",
+      "observed": {
+        "baseline": {
+          "decision_action": "HOLD",
+          "decision_executed": false,
+          "filled_quantities": [],
+          "order_count": 0,
+          "pending_count": 1
+        },
+        "fixed": {
+          "decision_action": "BUY_YES",
+          "decision_executed": true,
+          "filled_quantities": [
+            "10.0"
+          ],
+          "order_count": 1,
+          "pending_count": 0
+        }
+      }
+    },
+    {
+      "case_id": "execution.open_partial",
+      "expected_observations": {
+        "baseline": {
+          "call_count": 4,
+          "execution_uncertain": true,
+          "hedged": false,
+          "requires_reconciliation": true,
+          "residual_exposures": {},
+          "success": false,
+          "unwind_count": 2
+        },
+        "fixed": {
+          "call_count": 2,
+          "execution_uncertain": true,
+          "hedged": false,
+          "requires_reconciliation": true,
+          "residual_exposures": {
+            "A": "10",
+            "B": "1"
+          },
+          "success": false,
+          "unwind_count": 0
+        }
+      },
+      "fixed_invariant_satisfied": true,
+      "historical_behavior_reproduced": true,
+      "invariant": "Uncertain open orders stop further submissions, retaining known exposure for reconciliation.",
+      "observed": {
+        "baseline": {
+          "call_count": 4,
+          "execution_uncertain": true,
+          "hedged": false,
+          "requires_reconciliation": true,
+          "residual_exposures": {},
+          "success": false,
+          "unwind_count": 2
+        },
+        "fixed": {
+          "call_count": 2,
+          "execution_uncertain": true,
+          "hedged": false,
+          "requires_reconciliation": true,
+          "residual_exposures": {
+            "A": "10",
+            "B": "1"
+          },
+          "success": false,
+          "unwind_count": 0
+        }
+      }
+    },
+    {
+      "case_id": "paper.stale_writer",
+      "expected_observations": {
+        "baseline": {
+          "cash": 9999.5,
+          "contracts": 1.0,
+          "fills": 1,
+          "response_statuses": [
+            "filled",
+            "filled"
+          ]
+        },
+        "fixed": {
+          "cash": 9999.0,
+          "contracts": 2.0,
+          "fills": 2,
+          "response_statuses": [
+            "filled",
+            "filled"
+          ]
+        }
+      },
+      "fixed_invariant_satisfied": true,
+      "historical_behavior_reproduced": true,
+      "invariant": "Two acknowledged independent paper buys survive a fresh ledger reload.",
+      "observed": {
+        "baseline": {
+          "cash": 9999.5,
+          "contracts": 1.0,
+          "fills": 1,
+          "response_statuses": [
+            "filled",
+            "filled"
+          ]
+        },
+        "fixed": {
+          "cash": 9999.0,
+          "contracts": 2.0,
+          "fills": 2,
+          "response_statuses": [
+            "filled",
+            "filled"
+          ]
+        }
+      }
+    },
+    {
+      "case_id": "control.full_spread",
+      "expected_observations": {
+        "baseline": {
+          "call_count": 2,
+          "execution_uncertain": false,
+          "hedged": false,
+          "requires_reconciliation": false,
+          "residual_exposures": {},
+          "success": true,
+          "unwind_count": 0
+        },
+        "fixed": {
+          "call_count": 2,
+          "execution_uncertain": false,
+          "hedged": false,
+          "requires_reconciliation": false,
+          "residual_exposures": {},
+          "success": true,
+          "unwind_count": 0
+        }
+      },
+      "fixed_invariant_satisfied": true,
+      "historical_behavior_reproduced": true,
+      "invariant": "Normal exact terminal fills remain successful without unwind or reconciliation.",
+      "observed": {
+        "baseline": {
+          "call_count": 2,
+          "execution_uncertain": false,
+          "hedged": false,
+          "requires_reconciliation": false,
+          "residual_exposures": {},
+          "success": true,
+          "unwind_count": 0
+        },
+        "fixed": {
+          "call_count": 2,
+          "execution_uncertain": false,
+          "hedged": false,
+          "requires_reconciliation": false,
+          "residual_exposures": {},
+          "success": true,
+          "unwind_count": 0
+        }
+      }
+    }
+  ],
+  "evaluation": "pinned_runtime_regression_replay",
+  "normalization": "Selected observable fields plus raw order/execution/ledger payloads; paper-fill timestamps and temporary ledger paths are omitted.",
+  "runner_sha256": "c7926bf26ca726bc173b4d8d0504c397c2339e0d165014dd60f95f0674efd7b3",
+  "schema_version": 1,
+  "scope": "Three selected software regressions plus one normal control; no LLM, Skill, profitability, or comparative research evaluation.",
+  "snapshots": {
+    "baseline": {
+      "cases": {
+        "agent.queued_tool_request": {
+          "fixture": {
+            "final_output": "{\"action\":\"hold\"}",
+            "paper_cash": 10000,
+            "paper_commission_rate": 0,
+            "paper_fill_rate": 1,
+            "tool_request": [
+              "A",
+              "buy",
+              10.0,
+              0.52
+            ]
+          },
+          "observed": {
+            "decision_action": "HOLD",
+            "decision_executed": false,
+            "filled_quantities": [],
+            "order_count": 0,
+            "pending_count": 1
+          },
+          "orders": [],
+          "tool_receipts": [
+            "Trade queued: buy 10.0 of A @ 0.52. Will execute after analysis completes."
+          ]
+        },
+        "control.full_spread": {
+          "calls": [
+            {
+              "limit_price": "0.50",
+              "quantity": "10",
+              "side": "buy",
+              "ticker": "A"
+            },
+            {
+              "limit_price": "0.50",
+              "quantity": "10",
+              "side": "buy",
+              "ticker": "B"
+            }
+          ],
+          "fixture": {
+            "scripted_responses": [
+              [
+                "filled",
+                "10"
+              ],
+              [
+                "filled",
+                "10"
+              ]
+            ],
+            "unwind_on_partial": true
+          },
+          "observed": {
+            "call_count": 2,
+            "execution_uncertain": false,
+            "hedged": false,
+            "requires_reconciliation": false,
+            "residual_exposures": {},
+            "success": true,
+            "unwind_count": 0
+          },
+          "result": {
+            "all_filled": true,
+            "execution_uncertain": false,
+            "failure_reason": "",
+            "hedged": false,
+            "leg_results": [
+              {
+                "accepted": true,
+                "executed": true,
+                "failure_reason": null,
+                "ok": true,
+                "order": {
+                  "average_price": "0.50",
+                  "commission": "0",
+                  "filled_quantity": "10",
+                  "limit_price": "0.50",
+                  "remaining": "0",
+                  "side": "buy",
+                  "status": "filled",
+                  "ticker": {
+                    "market_id": "A",
+                    "name": "",
+                    "symbol": "A",
+                    "token_id": "A"
+                  },
+                  "trades": []
+                },
+                "status": "filled"
+              },
+              {
+                "accepted": true,
+                "executed": true,
+                "failure_reason": null,
+                "ok": true,
+                "order": {
+                  "average_price": "0.50",
+                  "commission": "0",
+                  "filled_quantity": "10",
+                  "limit_price": "0.50",
+                  "remaining": "0",
+                  "side": "buy",
+                  "status": "filled",
+                  "ticker": {
+                    "market_id": "B",
+                    "name": "",
+                    "symbol": "B",
+                    "token_id": "B"
+                  },
+                  "trades": []
+                },
+                "status": "filled"
+              }
+            ],
+            "requested_legs": [
+              {
+                "price": "0.50",
+                "quantity": "10",
+                "side": "buy",
+                "ticker": {
+                  "name": "",
+                  "symbol": "A"
+                }
+              },
+              {
+                "price": "0.50",
+                "quantity": "10",
+                "side": "buy",
+                "ticker": {
+                  "name": "",
+                  "symbol": "B"
+                }
+              }
+            ],
+            "requires_reconciliation": false,
+            "residual_exposures": [],
+            "success": true,
+            "uncertain_leg_indices": [],
+            "unwind_details": "",
+            "unwind_results": []
+          }
+        },
+        "execution.open_partial": {
+          "calls": [
+            {
+              "limit_price": "0.50",
+              "quantity": "10",
+              "side": "buy",
+              "ticker": "A"
+            },
+            {
+              "limit_price": "0.50",
+              "quantity": "10",
+              "side": "buy",
+              "ticker": "B"
+            },
+            {
+              "limit_price": "0.49",
+              "quantity": "1",
+              "side": "sell",
+              "ticker": "B"
+            },
+            {
+              "limit_price": "0.49",
+              "quantity": "10",
+              "side": "sell",
+              "ticker": "A"
+            }
+          ],
+          "fixture": {
+            "scripted_responses": [
+              [
+                "filled",
+                "10"
+              ],
+              [
+                "partially_filled",
+                "1"
+              ],
+              [
+                "filled",
+                "1"
+              ],
+              [
+                "filled",
+                "10"
+              ]
+            ],
+            "unwind_on_partial": true
+          },
+          "observed": {
+            "call_count": 4,
+            "execution_uncertain": true,
+            "hedged": false,
+            "requires_reconciliation": true,
+            "residual_exposures": {},
+            "success": false,
+            "unwind_count": 2
+          },
+          "result": {
+            "all_filled": false,
+            "execution_uncertain": true,
+            "failure_reason": "leg 2 failed: partially_filled: filled 1 of 10",
+            "hedged": false,
+            "leg_results": [
+              {
+                "accepted": true,
+                "executed": true,
+                "failure_reason": null,
+                "ok": true,
+                "order": {
+                  "average_price": "0.50",
+                  "commission": "0",
+                  "filled_quantity": "10",
+                  "limit_price": "0.50",
+                  "remaining": "0",
+                  "side": "buy",
+                  "status": "filled",
+                  "ticker": {
+                    "market_id": "A",
+                    "name": "",
+                    "symbol": "A",
+                    "token_id": "A"
+                  },
+                  "trades": []
+                },
+                "status": "filled"
+              },
+              {
+                "accepted": true,
+                "executed": true,
+                "failure_reason": null,
+                "ok": true,
+                "order": {
+                  "average_price": "0.50",
+                  "commission": "0",
+                  "filled_quantity": "1",
+                  "limit_price": "0.50",
+                  "remaining": "9",
+                  "side": "buy",
+                  "status": "partially_filled",
+                  "ticker": {
+                    "market_id": "B",
+                    "name": "",
+                    "symbol": "B",
+                    "token_id": "B"
+                  },
+                  "trades": []
+                },
+                "status": "partially_filled"
+              }
+            ],
+            "requested_legs": [
+              {
+                "price": "0.50",
+                "quantity": "10",
+                "side": "buy",
+                "ticker": {
+                  "name": "",
+                  "symbol": "A"
+                }
+              },
+              {
+                "price": "0.50",
+                "quantity": "10",
+                "side": "buy",
+                "ticker": {
+                  "name": "",
+                  "symbol": "B"
+                }
+              }
+            ],
+            "requires_reconciliation": true,
+            "residual_exposures": [],
+            "success": false,
+            "uncertain_leg_indices": [
+              2
+            ],
+            "unwind_details": "FILLED unwind sell B qty=1: confirmed; FILLED unwind sell A qty=10: confirmed",
+            "unwind_results": [
+              {
+                "execution_uncertain": false,
+                "failure_reason": "",
+                "leg": {
+                  "price": "0.49",
+                  "quantity": "1",
+                  "side": "sell",
+                  "ticker": {
+                    "name": "",
+                    "symbol": "B"
+                  }
+                },
+                "leg_index": 2,
+                "result": {
+                  "accepted": true,
+                  "executed": true,
+                  "failure_reason": null,
+                  "ok": true,
+                  "order": {
+                    "average_price": "0.49",
+                    "commission": "0",
+                    "filled_quantity": "1",
+                    "limit_price": "0.49",
+                    "remaining": "0",
+                    "side": "sell",
+                    "status": "filled",
+                    "ticker": {
+                      "market_id": "B",
+                      "name": "",
+                      "symbol": "B",
+                      "token_id": "B"
+                    },
+                    "trades": []
+                  },
+                  "status": "filled"
+                }
+              },
+              {
+                "execution_uncertain": false,
+                "failure_reason": "",
+                "leg": {
+                  "price": "0.49",
+                  "quantity": "10",
+                  "side": "sell",
+                  "ticker": {
+                    "name": "",
+                    "symbol": "A"
+                  }
+                },
+                "leg_index": 1,
+                "result": {
+                  "accepted": true,
+                  "executed": true,
+                  "failure_reason": null,
+                  "ok": true,
+                  "order": {
+                    "average_price": "0.49",
+                    "commission": "0",
+                    "filled_quantity": "10",
+                    "limit_price": "0.49",
+                    "remaining": "0",
+                    "side": "sell",
+                    "status": "filled",
+                    "ticker": {
+                      "market_id": "A",
+                      "name": "",
+                      "symbol": "A",
+                      "token_id": "A"
+                    },
+                    "trades": []
+                  },
+                  "status": "filled"
+                }
+              }
+            ]
+          }
+        },
+        "paper.stale_writer": {
+          "fixture": {
+            "asks": [
+              [
+                0.5,
+                100
+              ]
+            ],
+            "contracts": 1.0,
+            "initial_cash": 10000,
+            "limit_price": 0.6,
+            "market_id": "market-a",
+            "schedule_rate": 0,
+            "sequence": "construct two instances; buy once each; reload third",
+            "side": "yes",
+            "venue": "polymarket"
+          },
+          "observed": {
+            "cash": 9999.5,
+            "contracts": 1.0,
+            "fills": 1,
+            "response_statuses": [
+              "filled",
+              "filled"
+            ]
+          },
+          "portfolio_without_path": {
+            "cash": 9999.5,
+            "fills": 1,
+            "initial_cash": 10000.0,
+            "note": "Paper ledger. Positions are carried at cost; resolution and P&L are not tracked.",
+            "positions": [
+              {
+                "contracts": 1.0,
+                "cost": 0.5,
+                "fees": 0.0,
+                "market_id": "market-a",
+                "side": "yes",
+                "venue": "polymarket"
+              }
+            ]
+          },
+          "responses_without_timestamps": [
+            {
+              "average_price": 0.5,
+              "cost": 0.5,
+              "fees": 0.0,
+              "filled": 1.0,
+              "levels": [
+                {
+                  "contracts": 1.0,
+                  "fee": 0.0,
+                  "price": 0.5
+                }
+              ],
+              "limit_price": 0.6,
+              "market_id": "market-a",
+              "requested": 1.0,
+              "side": "yes",
+              "status": "filled",
+              "venue": "polymarket"
+            },
+            {
+              "average_price": 0.5,
+              "cost": 0.5,
+              "fees": 0.0,
+              "filled": 1.0,
+              "levels": [
+                {
+                  "contracts": 1.0,
+                  "fee": 0.0,
+                  "price": 0.5
+                }
+              ],
+              "limit_price": 0.6,
+              "market_id": "market-a",
+              "requested": 1.0,
+              "side": "yes",
+              "status": "filled",
+              "venue": "polymarket"
+            }
+          ]
+        }
+      },
+      "provenance": {
+        "dependencies": {
+          "aiohappyeyeballs": "2.7.1",
+          "aiohttp": "3.14.4",
+          "aiolimiter": "1.3.0",
+          "aiosignal": "1.4.0",
+          "annotated-types": "0.8.0",
+          "anyio": "4.15.1",
+          "arrow": "1.4.0",
+          "artifact-tool-v2": "2.8.85",
+          "ast-serialize": "0.12.1",
+          "attrs": "26.1.0",
+          "babel": "2.18.0",
+          "backrefs": "8.1",
+          "beartype": "0.22.9",
+          "beautifulsoup4": "4.15.0",
+          "bitarray": "3.12.1",
+          "build": "1.6.1",
+          "cadquery": "2.7.0",
+          "cadquery-ocp": "7.8.1.1.post1",
+          "casadi": "3.7.2",
+          "certifi": "2026.7.22",
+          "cffi": "2.1.1",
+          "charset-normalizer": "3.5.2",
+          "ckzg": "2.1.8",
+          "click": "8.5.0",
+          "codespell": "2.4.3",
+          "colorama": "0.4.6",
+          "construct": "2.10.70",
+          "construct-typing": "0.8.1",
+          "contourpy": "1.3.3",
+          "coverage": "7.16.2",
+          "cryptography": "50.0.2",
+          "cycler": "0.12.1",
+          "cytoolz": "1.2.0",
+          "et-xmlfile": "2.0.0",
+          "eth-abi": "6.0.0",
+          "eth-account": "0.14.0",
+          "eth-hash": "0.8.0",
+          "eth-keyfile": "0.10.0",
+          "eth-keys": "0.8.0",
+          "eth-rlp": "3.0.0",
+          "eth-typing": "6.0.0",
+          "eth-utils": "6.0.0",
+          "ezdxf": "1.4.4",
+          "feedparser": "6.0.14",
+          "feedparser-sgmllib": "2.1.0",
+          "fonttools": "4.61.1",
+          "frozenlist": "1.8.0",
+          "ghp-import": "2.1.0",
+          "griffelib": "2.3.2",
+          "h11": "0.16.0",
+          "h2": "4.4.1",
+          "hexbytes": "2.0.0",
+          "hpack": "4.2.0",
+          "httpcore": "1.0.9",
+          "httpcore2": "2.13.1",
+          "httpx": "0.28.1",
+          "httpx2": "2.13.1",
+          "hyperframe": "6.1.0",
+          "hypothesis": "6.169.0",
+          "idna": "3.20",
+          "iniconfig": "2.3.1",
+          "jinja2": "3.1.6",
+          "jiter": "0.17.0",
+          "joblib": "1.5.3",
+          "jsonalias": "0.1.1",
+          "jsonschema": "4.26.0",
+          "jsonschema-specifications": "2025.9.1",
+          "kalshi-python": "2.1.4",
+          "kiwisolver": "1.4.9",
+          "lazy-imports": "1.2.0",
+          "librt": "0.16.0",
+          "linkify-it-py": "2.2.0",
+          "lxml": "6.1.1",
+          "markdown": "3.11",
+          "markdown-it-py": "4.2.0",
+          "markupsafe": "3.0.4",
+          "matplotlib": "3.10.8",
+          "mcp": "2.3.0",
+          "mcp-types": "2.3.0",
+          "mdit-py-plugins": "0.6.1",
+          "mdurl": "0.1.2",
+          "mergedeep": "1.3.4",
+          "mkdocs": "1.6.1",
+          "mkdocs-get-deps": "0.2.2",
+          "mkdocs-material": "9.7.7",
+          "mkdocs-material-extensions": "1.3.1",
+          "more-itertools": "11.1.0",
+          "msgpack": "1.2.1",
+          "multidict": "6.7.1",
+          "multimethod": "1.12",
+          "mypy": "1.20.2",
+          "mypy-extensions": "1.1.0",
+          "nlopt": "2.11.0",
+          "numpy": "2.3.5",
+          "openai": "3.29.0",
+          "openai-agents": "0.23.1",
+          "openpyxl": "3.1.5",
+          "opentelemetry-api": "1.45.1",
+          "oracle3": "1.2.2",
+          "packaging": "26.3",
+          "paginate": "0.5.7",
+          "pandas": "2.2.3",
+          "parsimonious": "0.10.0",
+          "path": "17.1.1",
+          "pathspec": "1.1.1",
+          "pdf2image": "1.17.0",
+          "pdfminer.six": "20251230",
+          "pdfplumber": "0.11.9",
+          "pillow": "12.3.0",
+          "pip": "26.2.1",
+          "platformdirs": "4.13.0",
+          "pluggy": "1.6.0",
+          "poetry-core": "2.5.0",
+          "poly-eip712-structs": "0.0.1",
+          "propcache": "0.5.2",
+          "py-builder-signing-sdk": "0.0.2",
+          "py-clob-client": "0.34.6",
+          "py-ecc": "8.0.0",
+          "py-order-utils": "0.3.2",
+          "pycparser": "3.11",
+          "pycryptodome": "3.24.1",
+          "pydantic": "2.14.1",
+          "pydantic-core": "2.50.1",
+          "pygments": "2.21.0",
+          "pyhumps": "3.8.0",
+          "pyjwt": "2.15.1",
+          "pymdown-extensions": "12.2",
+          "pymupdf": "1.26.6",
+          "pyparsing": "3.3.2",
+          "pypdf": "6.10.0",
+          "pypdfium2": "5.13.0",
+          "pyproject-hooks": "1.3.3",
+          "pytest": "8.4.2",
+          "pytest-asyncio": "0.23.8",
+          "pytest-cov": "7.1.0",
+          "pytest-mock": "3.16.0",
+          "python-dateutil": "2.9.0.post0",
+          "python-docx": "1.2.0",
+          "python-dotenv": "1.2.4",
+          "python-multipart": "0.0.32",
+          "python-pptx": "1.0.2",
+          "pytz": "2026.4",
+          "pyyaml": "6.0.3",
+          "pyyaml-env-tag": "1.1",
+          "referencing": "0.37.0",
+          "regex": "2026.9.29",
+          "reportlab": "4.4.9",
+          "requests": "2.34.2",
+          "rich": "13.9.4",
+          "rlp": "5.0.0",
+          "rpds-py": "2026.9.1",
+          "ruff": "0.15.22",
+          "runtype": "0.5.3",
+          "scikit-learn": "1.8.0",
+          "scipy": "1.17.0",
+          "seaborn": "0.13.2",
+          "setuptools": "84.0.0",
+          "six": "1.17.0",
+          "sniffio": "1.3.1",
+          "socksio": "1.0.0",
+          "solana": "0.41.0",
+          "solders": "0.29.0",
+          "sortedcontainers": "2.4.0",
+          "soupsieve": "3.0.1",
+          "sse-starlette": "3.5.0",
+          "starlette": "1.7.0",
+          "tenacity": "9.2.1",
+          "textual": "6.2.1",
+          "threadpoolctl": "3.6.0",
+          "toolz": "1.2.0",
+          "trame": "3.13.2",
+          "trame-client": "3.13.6",
+          "trame-common": "1.2.7",
+          "trame-components": "2.5.0",
+          "trame-server": "3.14.0",
+          "trame-vtk": "2.11.16",
+          "trame-vuetify": "3.2.5",
+          "truststore": "0.10.4",
+          "typing-extensions": "4.16.0",
+          "typing-inspection": "0.4.4",
+          "tzdata": "2026.5",
+          "urllib3": "2.8.0",
+          "uv": "0.12.23",
+          "uvicorn": "0.54.0",
+          "vtk": "9.3.1",
+          "watchdog": "6.0.0",
+          "websockets": "16.1.1",
+          "wheel": "0.48.0",
+          "wslink": "2.5.7",
+          "xlrd": "2.0.1",
+          "xlsxwriter": "3.2.9",
+          "yarl": "1.25.1",
+          "zstandard": "0.25.0"
+        },
+        "model_driver": "scripted external Agents SDK substitute; no model calls",
+        "network": "socket connections and DNS blocked before project imports",
+        "probe_sha256": "523da262a5390219906385e3a4f12ac9528e62da04f9e9a715c10913b383cfac",
+        "python_version": "3.12.14",
+        "snapshot_import_paths": [
+          "examples/strategies/openai_related_market_agent_strategy.py",
+          "oracle3/__init__.py",
+          "oracle3/data/market_data_manager.py",
+          "oracle3/events/events.py",
+          "oracle3/fees.py",
+          "oracle3/mcp_server/__init__.py",
+          "oracle3/mcp_server/paper.py",
+          "oracle3/order/order_book.py",
+          "oracle3/position/position_manager.py",
+          "oracle3/risk/risk_manager.py",
+          "oracle3/strategy/__init__.py",
+          "oracle3/strategy/agent_strategy.py",
+          "oracle3/strategy/market_making_strategy.py",
+          "oracle3/strategy/orderbook_imbalance_strategy.py",
+          "oracle3/strategy/quant_strategy.py",
+          "oracle3/strategy/simple_strategy.py",
+          "oracle3/strategy/strategy.py",
+          "oracle3/strategy/test_strategy.py",
+          "oracle3/ticker/ticker.py",
+          "oracle3/trader/paper_trader.py",
+          "oracle3/trader/spread_executor.py",
+          "oracle3/trader/trader.py",
+          "oracle3/trader/types.py"
+        ],
+        "snapshot_imports_verified": true,
+        "source_archive_sha256": "7e421d0b4f038d326608cf92fdd5788e11e896143bf2e4376dc251179f461b2b",
+        "source_git_revision": "ec0f1a5d6bde7e9fe5b92663ec90aea496f74082",
+        "source_git_tree": "4c5dc19bdf6dfe48e38268a814299de9a70ef498"
+      }
+    },
+    "fixed": {
+      "cases": {
+        "agent.queued_tool_request": {
+          "fixture": {
+            "final_output": "{\"action\":\"hold\"}",
+            "paper_cash": 10000,
+            "paper_commission_rate": 0,
+            "paper_fill_rate": 1,
+            "tool_request": [
+              "A",
+              "buy",
+              10.0,
+              0.52
+            ]
+          },
+          "observed": {
+            "decision_action": "BUY_YES",
+            "decision_executed": true,
+            "filled_quantities": [
+              "10.0"
+            ],
+            "order_count": 1,
+            "pending_count": 0
+          },
+          "orders": [
+            {
+              "accounting_confirmed": true,
+              "average_price": "0.52",
+              "client_order_id": "",
+              "commission": "0.000",
+              "execution_uncertain": false,
+              "filled_quantity": "10.0",
+              "limit_price": "0.52",
+              "reconciliation_reason": "",
+              "remaining": "0.0",
+              "requires_reconciliation": false,
+              "side": "buy",
+              "status": "filled",
+              "ticker": {
+                "name": "",
+                "symbol": "A",
+                "token_id": "A"
+              },
+              "trades": [
+                {
+                  "client_order_id": "",
+                  "commission": "0.000",
+                  "execution_id": "",
+                  "fee_source": "",
+                  "price": "0.52",
+                  "quantity": "10.0",
+                  "side": "buy",
+                  "ticker": {
+                    "name": "",
+                    "symbol": "A",
+                    "token_id": "A"
+                  },
+                  "venue_order_id": ""
+                }
+              ],
+              "venue_order_id": ""
+            }
+          ],
+          "tool_receipts": [
+            "Trade request queued, not submitted or filled. The strategy must execute the queue and inspect the actual order outcome."
+          ]
+        },
+        "control.full_spread": {
+          "calls": [
+            {
+              "limit_price": "0.50",
+              "quantity": "10",
+              "side": "buy",
+              "ticker": "A"
+            },
+            {
+              "limit_price": "0.50",
+              "quantity": "10",
+              "side": "buy",
+              "ticker": "B"
+            }
+          ],
+          "fixture": {
+            "scripted_responses": [
+              [
+                "filled",
+                "10"
+              ],
+              [
+                "filled",
+                "10"
+              ]
+            ],
+            "unwind_on_partial": true
+          },
+          "observed": {
+            "call_count": 2,
+            "execution_uncertain": false,
+            "hedged": false,
+            "requires_reconciliation": false,
+            "residual_exposures": {},
+            "success": true,
+            "unwind_count": 0
+          },
+          "result": {
+            "all_filled": true,
+            "execution_uncertain": false,
+            "failure_reason": "",
+            "hedged": false,
+            "leg_results": [
+              {
+                "accepted": true,
+                "client_order_id": "",
+                "executed": true,
+                "failure_reason": null,
+                "ok": true,
+                "order": {
+                  "accounting_confirmed": true,
+                  "average_price": "0.50",
+                  "client_order_id": "",
+                  "commission": "0",
+                  "execution_uncertain": false,
+                  "filled_quantity": "10",
+                  "limit_price": "0.50",
+                  "reconciliation_reason": "",
+                  "remaining": "0",
+                  "requires_reconciliation": false,
+                  "side": "buy",
+                  "status": "filled",
+                  "ticker": {
+                    "market_id": "A",
+                    "name": "",
+                    "symbol": "A",
+                    "token_id": "A"
+                  },
+                  "trades": [],
+                  "venue_order_id": ""
+                },
+                "requires_reconciliation": false,
+                "status": "filled",
+                "venue_order_id": ""
+              },
+              {
+                "accepted": true,
+                "client_order_id": "",
+                "executed": true,
+                "failure_reason": null,
+                "ok": true,
+                "order": {
+                  "accounting_confirmed": true,
+                  "average_price": "0.50",
+                  "client_order_id": "",
+                  "commission": "0",
+                  "execution_uncertain": false,
+                  "filled_quantity": "10",
+                  "limit_price": "0.50",
+                  "reconciliation_reason": "",
+                  "remaining": "0",
+                  "requires_reconciliation": false,
+                  "side": "buy",
+                  "status": "filled",
+                  "ticker": {
+                    "market_id": "B",
+                    "name": "",
+                    "symbol": "B",
+                    "token_id": "B"
+                  },
+                  "trades": [],
+                  "venue_order_id": ""
+                },
+                "requires_reconciliation": false,
+                "status": "filled",
+                "venue_order_id": ""
+              }
+            ],
+            "requested_legs": [
+              {
+                "price": "0.50",
+                "quantity": "10",
+                "side": "buy",
+                "ticker": {
+                  "name": "",
+                  "symbol": "A"
+                }
+              },
+              {
+                "price": "0.50",
+                "quantity": "10",
+                "side": "buy",
+                "ticker": {
+                  "name": "",
+                  "symbol": "B"
+                }
+              }
+            ],
+            "requires_reconciliation": false,
+            "residual_exposures": [],
+            "success": true,
+            "uncertain_leg_indices": [],
+            "unwind_details": "",
+            "unwind_results": []
+          }
+        },
+        "execution.open_partial": {
+          "calls": [
+            {
+              "limit_price": "0.50",
+              "quantity": "10",
+              "side": "buy",
+              "ticker": "A"
+            },
+            {
+              "limit_price": "0.50",
+              "quantity": "10",
+              "side": "buy",
+              "ticker": "B"
+            }
+          ],
+          "fixture": {
+            "scripted_responses": [
+              [
+                "filled",
+                "10"
+              ],
+              [
+                "partially_filled",
+                "1"
+              ],
+              [
+                "filled",
+                "1"
+              ],
+              [
+                "filled",
+                "10"
+              ]
+            ],
+            "unwind_on_partial": true
+          },
+          "observed": {
+            "call_count": 2,
+            "execution_uncertain": true,
+            "hedged": false,
+            "requires_reconciliation": true,
+            "residual_exposures": {
+              "A": "10",
+              "B": "1"
+            },
+            "success": false,
+            "unwind_count": 0
+          },
+          "result": {
+            "all_filled": false,
+            "execution_uncertain": true,
+            "failure_reason": "leg 2 failed: partially_filled: filled 1 of 10; reconciliation required",
+            "hedged": false,
+            "leg_results": [
+              {
+                "accepted": true,
+                "client_order_id": "",
+                "executed": true,
+                "failure_reason": null,
+                "ok": true,
+                "order": {
+                  "accounting_confirmed": true,
+                  "average_price": "0.50",
+                  "client_order_id": "",
+                  "commission": "0",
+                  "execution_uncertain": false,
+                  "filled_quantity": "10",
+                  "limit_price": "0.50",
+                  "reconciliation_reason": "",
+                  "remaining": "0",
+                  "requires_reconciliation": false,
+                  "side": "buy",
+                  "status": "filled",
+                  "ticker": {
+                    "market_id": "A",
+                    "name": "",
+                    "symbol": "A",
+                    "token_id": "A"
+                  },
+                  "trades": [],
+                  "venue_order_id": ""
+                },
+                "requires_reconciliation": false,
+                "status": "filled",
+                "venue_order_id": ""
+              },
+              {
+                "accepted": true,
+                "client_order_id": "",
+                "executed": true,
+                "failure_reason": null,
+                "ok": true,
+                "order": {
+                  "accounting_confirmed": true,
+                  "average_price": "0.50",
+                  "client_order_id": "",
+                  "commission": "0",
+                  "execution_uncertain": false,
+                  "filled_quantity": "1",
+                  "limit_price": "0.50",
+                  "reconciliation_reason": "",
+                  "remaining": "9",
+                  "requires_reconciliation": true,
+                  "side": "buy",
+                  "status": "partially_filled",
+                  "ticker": {
+                    "market_id": "B",
+                    "name": "",
+                    "symbol": "B",
+                    "token_id": "B"
+                  },
+                  "trades": [],
+                  "venue_order_id": ""
+                },
+                "requires_reconciliation": true,
+                "status": "partially_filled",
+                "venue_order_id": ""
+              }
+            ],
+            "requested_legs": [
+              {
+                "price": "0.50",
+                "quantity": "10",
+                "side": "buy",
+                "ticker": {
+                  "name": "",
+                  "symbol": "A"
+                }
+              },
+              {
+                "price": "0.50",
+                "quantity": "10",
+                "side": "buy",
+                "ticker": {
+                  "name": "",
+                  "symbol": "B"
+                }
+              }
+            ],
+            "requires_reconciliation": true,
+            "residual_exposures": [
+              {
+                "quantity": "10",
+                "ticker": {
+                  "name": "",
+                  "symbol": "A"
+                }
+              },
+              {
+                "quantity": "1",
+                "ticker": {
+                  "name": "",
+                  "symbol": "B"
+                }
+              }
+            ],
+            "success": false,
+            "uncertain_leg_indices": [
+              2
+            ],
+            "unwind_details": "",
+            "unwind_results": []
+          }
+        },
+        "paper.stale_writer": {
+          "fixture": {
+            "asks": [
+              [
+                0.5,
+                100
+              ]
+            ],
+            "contracts": 1.0,
+            "initial_cash": 10000,
+            "limit_price": 0.6,
+            "market_id": "market-a",
+            "schedule_rate": 0,
+            "sequence": "construct two instances; buy once each; reload third",
+            "side": "yes",
+            "venue": "polymarket"
+          },
+          "observed": {
+            "cash": 9999.0,
+            "contracts": 2.0,
+            "fills": 2,
+            "response_statuses": [
+              "filled",
+              "filled"
+            ]
+          },
+          "portfolio_without_path": {
+            "cash": 9999.0,
+            "fills": 2,
+            "initial_cash": 10000.0,
+            "note": "Paper ledger. Positions are carried at cost; resolution and P&L are not tracked.",
+            "positions": [
+              {
+                "contracts": 2.0,
+                "cost": 1.0,
+                "fees": 0.0,
+                "market_id": "market-a",
+                "side": "yes",
+                "venue": "polymarket"
+              }
+            ]
+          },
+          "responses_without_timestamps": [
+            {
+              "average_price": 0.5,
+              "cost": 0.5,
+              "fees": 0.0,
+              "filled": 1.0,
+              "levels": [
+                {
+                  "contracts": 1.0,
+                  "fee": 0.0,
+                  "price": 0.5
+                }
+              ],
+              "limit_price": 0.6,
+              "market_id": "market-a",
+              "requested": 1.0,
+              "side": "yes",
+              "status": "filled",
+              "venue": "polymarket"
+            },
+            {
+              "average_price": 0.5,
+              "cost": 0.5,
+              "fees": 0.0,
+              "filled": 1.0,
+              "levels": [
+                {
+                  "contracts": 1.0,
+                  "fee": 0.0,
+                  "price": 0.5
+                }
+              ],
+              "limit_price": 0.6,
+              "market_id": "market-a",
+              "requested": 1.0,
+              "side": "yes",
+              "status": "filled",
+              "venue": "polymarket"
+            }
+          ]
+        }
+      },
+      "provenance": {
+        "dependencies": {
+          "aiohappyeyeballs": "2.7.1",
+          "aiohttp": "3.14.4",
+          "aiolimiter": "1.3.0",
+          "aiosignal": "1.4.0",
+          "annotated-types": "0.8.0",
+          "anyio": "4.15.1",
+          "arrow": "1.4.0",
+          "artifact-tool-v2": "2.8.85",
+          "ast-serialize": "0.12.1",
+          "attrs": "26.1.0",
+          "babel": "2.18.0",
+          "backrefs": "8.1",
+          "beartype": "0.22.9",
+          "beautifulsoup4": "4.15.0",
+          "bitarray": "3.12.1",
+          "build": "1.6.1",
+          "cadquery": "2.7.0",
+          "cadquery-ocp": "7.8.1.1.post1",
+          "casadi": "3.7.2",
+          "certifi": "2026.7.22",
+          "cffi": "2.1.1",
+          "charset-normalizer": "3.5.2",
+          "ckzg": "2.1.8",
+          "click": "8.5.0",
+          "codespell": "2.4.3",
+          "colorama": "0.4.6",
+          "construct": "2.10.70",
+          "construct-typing": "0.8.1",
+          "contourpy": "1.3.3",
+          "coverage": "7.16.2",
+          "cryptography": "50.0.2",
+          "cycler": "0.12.1",
+          "cytoolz": "1.2.0",
+          "et-xmlfile": "2.0.0",
+          "eth-abi": "6.0.0",
+          "eth-account": "0.14.0",
+          "eth-hash": "0.8.0",
+          "eth-keyfile": "0.10.0",
+          "eth-keys": "0.8.0",
+          "eth-rlp": "3.0.0",
+          "eth-typing": "6.0.0",
+          "eth-utils": "6.0.0",
+          "ezdxf": "1.4.4",
+          "feedparser": "6.0.14",
+          "feedparser-sgmllib": "2.1.0",
+          "fonttools": "4.61.1",
+          "frozenlist": "1.8.0",
+          "ghp-import": "2.1.0",
+          "griffelib": "2.3.2",
+          "h11": "0.16.0",
+          "h2": "4.4.1",
+          "hexbytes": "2.0.0",
+          "hpack": "4.2.0",
+          "httpcore": "1.0.9",
+          "httpcore2": "2.13.1",
+          "httpx": "0.28.1",
+          "httpx2": "2.13.1",
+          "hyperframe": "6.1.0",
+          "hypothesis": "6.169.0",
+          "idna": "3.20",
+          "iniconfig": "2.3.1",
+          "jinja2": "3.1.6",
+          "jiter": "0.17.0",
+          "joblib": "1.5.3",
+          "jsonalias": "0.1.1",
+          "jsonschema": "4.26.0",
+          "jsonschema-specifications": "2025.9.1",
+          "kalshi-python": "2.1.4",
+          "kiwisolver": "1.4.9",
+          "lazy-imports": "1.2.0",
+          "librt": "0.16.0",
+          "linkify-it-py": "2.2.0",
+          "lxml": "6.1.1",
+          "markdown": "3.11",
+          "markdown-it-py": "4.2.0",
+          "markupsafe": "3.0.4",
+          "matplotlib": "3.10.8",
+          "mcp": "2.3.0",
+          "mcp-types": "2.3.0",
+          "mdit-py-plugins": "0.6.1",
+          "mdurl": "0.1.2",
+          "mergedeep": "1.3.4",
+          "mkdocs": "1.6.1",
+          "mkdocs-get-deps": "0.2.2",
+          "mkdocs-material": "9.7.7",
+          "mkdocs-material-extensions": "1.3.1",
+          "more-itertools": "11.1.0",
+          "msgpack": "1.2.1",
+          "multidict": "6.7.1",
+          "multimethod": "1.12",
+          "mypy": "1.20.2",
+          "mypy-extensions": "1.1.0",
+          "nlopt": "2.11.0",
+          "numpy": "2.3.5",
+          "openai": "3.29.0",
+          "openai-agents": "0.23.1",
+          "openpyxl": "3.1.5",
+          "opentelemetry-api": "1.45.1",
+          "oracle3": "1.2.2",
+          "packaging": "26.3",
+          "paginate": "0.5.7",
+          "pandas": "2.2.3",
+          "parsimonious": "0.10.0",
+          "path": "17.1.1",
+          "pathspec": "1.1.1",
+          "pdf2image": "1.17.0",
+          "pdfminer.six": "20251230",
+          "pdfplumber": "0.11.9",
+          "pillow": "12.3.0",
+          "pip": "26.2.1",
+          "platformdirs": "4.13.0",
+          "pluggy": "1.6.0",
+          "poetry-core": "2.5.0",
+          "poly-eip712-structs": "0.0.1",
+          "propcache": "0.5.2",
+          "py-builder-signing-sdk": "0.0.2",
+          "py-clob-client": "0.34.6",
+          "py-ecc": "8.0.0",
+          "py-order-utils": "0.3.2",
+          "pycparser": "3.11",
+          "pycryptodome": "3.24.1",
+          "pydantic": "2.14.1",
+          "pydantic-core": "2.50.1",
+          "pygments": "2.21.0",
+          "pyhumps": "3.8.0",
+          "pyjwt": "2.15.1",
+          "pymdown-extensions": "12.2",
+          "pymupdf": "1.26.6",
+          "pyparsing": "3.3.2",
+          "pypdf": "6.10.0",
+          "pypdfium2": "5.13.0",
+          "pyproject-hooks": "1.3.3",
+          "pytest": "8.4.2",
+          "pytest-asyncio": "0.23.8",
+          "pytest-cov": "7.1.0",
+          "pytest-mock": "3.16.0",
+          "python-dateutil": "2.9.0.post0",
+          "python-docx": "1.2.0",
+          "python-dotenv": "1.2.4",
+          "python-multipart": "0.0.32",
+          "python-pptx": "1.0.2",
+          "pytz": "2026.4",
+          "pyyaml": "6.0.3",
+          "pyyaml-env-tag": "1.1",
+          "referencing": "0.37.0",
+          "regex": "2026.9.29",
+          "reportlab": "4.4.9",
+          "requests": "2.34.2",
+          "rich": "13.9.4",
+          "rlp": "5.0.0",
+          "rpds-py": "2026.9.1",
+          "ruff": "0.15.22",
+          "runtype": "0.5.3",
+          "scikit-learn": "1.8.0",
+          "scipy": "1.17.0",
+          "seaborn": "0.13.2",
+          "setuptools": "84.0.0",
+          "six": "1.17.0",
+          "sniffio": "1.3.1",
+          "socksio": "1.0.0",
+          "solana": "0.41.0",
+          "solders": "0.29.0",
+          "sortedcontainers": "2.4.0",
+          "soupsieve": "3.0.1",
+          "sse-starlette": "3.5.0",
+          "starlette": "1.7.0",
+          "tenacity": "9.2.1",
+          "textual": "6.2.1",
+          "threadpoolctl": "3.6.0",
+          "toolz": "1.2.0",
+          "trame": "3.13.2",
+          "trame-client": "3.13.6",
+          "trame-common": "1.2.7",
+          "trame-components": "2.5.0",
+          "trame-server": "3.14.0",
+          "trame-vtk": "2.11.16",
+          "trame-vuetify": "3.2.5",
+          "truststore": "0.10.4",
+          "typing-extensions": "4.16.0",
+          "typing-inspection": "0.4.4",
+          "tzdata": "2026.5",
+          "urllib3": "2.8.0",
+          "uv": "0.12.23",
+          "uvicorn": "0.54.0",
+          "vtk": "9.3.1",
+          "watchdog": "6.0.0",
+          "websockets": "16.1.1",
+          "wheel": "0.48.0",
+          "wslink": "2.5.7",
+          "xlrd": "2.0.1",
+          "xlsxwriter": "3.2.9",
+          "yarl": "1.25.1",
+          "zstandard": "0.25.0"
+        },
+        "model_driver": "scripted external Agents SDK substitute; no model calls",
+        "network": "socket connections and DNS blocked before project imports",
+        "probe_sha256": "523da262a5390219906385e3a4f12ac9528e62da04f9e9a715c10913b383cfac",
+        "python_version": "3.12.14",
+        "snapshot_import_paths": [
+          "examples/strategies/openai_related_market_agent_strategy.py",
+          "oracle3/__init__.py",
+          "oracle3/data/market_data_manager.py",
+          "oracle3/events/events.py",
+          "oracle3/fees.py",
+          "oracle3/mcp_server/__init__.py",
+          "oracle3/mcp_server/paper.py",
+          "oracle3/order/order_book.py",
+          "oracle3/position/position_manager.py",
+          "oracle3/risk/risk_manager.py",
+          "oracle3/strategy/__init__.py",
+          "oracle3/strategy/agent_strategy.py",
+          "oracle3/strategy/market_making_strategy.py",
+          "oracle3/strategy/orderbook_imbalance_strategy.py",
+          "oracle3/strategy/quant_strategy.py",
+          "oracle3/strategy/simple_strategy.py",
+          "oracle3/strategy/strategy.py",
+          "oracle3/strategy/test_strategy.py",
+          "oracle3/ticker/ticker.py",
+          "oracle3/trader/order_journal.py",
+          "oracle3/trader/paper_trader.py",
+          "oracle3/trader/spread_executor.py",
+          "oracle3/trader/trader.py",
+          "oracle3/trader/types.py"
+        ],
+        "snapshot_imports_verified": true,
+        "source_archive_sha256": "45124a56315eecdaf948db4bccb57f0b9bdb917489b104edc73786b2335ebd67",
+        "source_git_revision": "586bd89b1ee5039488183d10744d389264e2bed1",
+        "source_git_tree": "5b5557f2551cf765e825605241a7a788739c0f01"
+      }
+    }
+  },
+  "status": "passed"
+}

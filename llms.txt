@@ -39,3 +39,7 @@
 - [oracle3-extras](https://github.com/YichengYang-Ethan/oracle3-extras): experimental venue, data, and wallet integrations; its venue coverage does not imply equivalent MCP support in core Oracle3
 - [Open problems](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/issues?q=is%3Aissue+label%3Aopen-problem)
 - [Discussions](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/discussions)
+
+## Research review
+
+- [Research overview and reproducible evidence](https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/research-review/): contribution boundaries, three pinned-revision regressions and an unrun agent evaluation proposal. These are software traces, not model-level benchmark results.

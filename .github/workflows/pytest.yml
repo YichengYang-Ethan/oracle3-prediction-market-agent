@@ -54,6 +54,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
@@ -68,6 +70,15 @@ jobs:
           TOGETHERAI_API_KEY: ${{ secrets.TOGETHERAI_API_KEY }}
         run: |
           poetry run pytest --cov=oracle3 --cov-report=xml --cov-report=term-missing
+      - name: Replay historical runtime regressions
+        run: poetry run python scripts/replay_runtime_regressions.py --output runtime-regressions.json
+      - name: Upload revision comparison evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-regressions
+          path: runtime-regressions.json
+          if-no-files-found: error
       - name: Replay agent tool and recovery contracts
         run: poetry run python scripts/check_agent_contracts.py --output agent-contracts.json
       - name: Upload contract regression evidence

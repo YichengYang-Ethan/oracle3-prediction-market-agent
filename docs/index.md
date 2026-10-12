@@ -7,6 +7,7 @@ contracts, and a local paper-trading ledger through MCP. Build strategies
 with Python and the trading engine, and inspect tool errors and incomplete
 execution with an offline contract harness.
 
+[Research overview and evidence](research-review.md) ·
 [Agent quickstart](agent-quickstart.md) · [MCP tool reference](mcp.md) ·
 [Machine-readable index](llms.txt) ·
 [GitHub](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent)
