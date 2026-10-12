@@ -526,7 +526,7 @@ async def run_live_kalshi_trading(
         private_key_path=private_key_path,
         alerter=alerter,
         **_live_journal_config(
-            'kalshi', api_key_id or os.environ.get('KALSHI_API_KEY_ID', ''), state_store
+            'kalshi', api_key_id or os.environ.get('KALSHI_API_KEY_ID') or '', state_store
         ),
     )
 
