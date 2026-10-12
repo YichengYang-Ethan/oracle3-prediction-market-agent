@@ -11,7 +11,7 @@ Give your agent Kalshi and Polymarket market data, fee-aware checks on related c
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20062548.svg)](https://doi.org/10.5281/zenodo.20062548)
 
-[Agent quickstart](docs/agent-quickstart.md) · [MCP tools](docs/mcp.md) · [Documentation](https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/) · [Machine-readable index](llms.txt) · [Contributing](.github/CONTRIBUTING.md)
+[Research overview and evidence](docs/research-review.md) · [Agent quickstart](docs/agent-quickstart.md) · [MCP tools](docs/mcp.md) · [Documentation](https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/) · [Machine-readable index](llms.txt) · [Contributing](.github/CONTRIBUTING.md)
 
 ## When to use Oracle3
 
@@ -124,6 +124,8 @@ Paper trading is a separate, explicit next step: `paper_order` writes to a local
 
 ## Reliability you can inspect
 
+For a short review, see the [research overview](docs/research-review.md): contribution boundaries, three replayable before/after failures, and a proposed agent evaluation. The comparison uses actual earlier and repaired Oracle3 commits with identical offline probes.
+
 The agent-facing contract harness runs nine frozen scenarios through the real MCP dispatcher, constraint checker and sequential spread executor, using mocked venue responses and a scripted trader.
 
 | Scenario | Behavior checked |
@@ -188,7 +190,7 @@ Useful contributions include a reproducible tool failure, a venue-adapter fixtur
 
 ## Related work and citation
 
-- [Coinjure / U Lab prediction-market-cli](https://github.com/ulab-uiuc/prediction-market-cli): upstream research and code; see attribution below.
+- [Coinjure / U Lab prediction-market-cli](https://github.com/ulab-uiuc/coinjure): upstream research and code; see attribution below.
 - [PMXT](https://github.com/pmxt-dev/pmxt): a unified prediction-market API.
 - [Prediction Market Analysis](https://github.com/Jon-Becker/prediction-market-analysis): data collection and analysis.
 - [Prediction Market Pricing](https://github.com/YichengYang-Ethan/prediction-market-pricing): companion pricing research and replication.
@@ -197,7 +199,7 @@ For software citation, use [CITATION.cff](CITATION.cff) and [Zenodo](https://doi
 
 ## Origin and attribution
 
-Oracle3 began as `ulab-uiuc/oracle3`, developed by Yicheng Yang and Haofei Yu at U Lab (University of Illinois Urbana-Champaign) under the MIT License, and it bundles the [`coinjure`](https://github.com/ulab-uiuc/prediction-market-cli) package from the same lab. The strategy, pricing, risk, dashboard, and test layers in this repository were added on top of that base; see [NOTICE](NOTICE) for the retained license text.
+Oracle3 began as `ulab-uiuc/oracle3`, developed by Yicheng Yang and Haofei Yu at U Lab (University of Illinois Urbana-Champaign) under the MIT License, and it bundles the [`coinjure`](https://github.com/ulab-uiuc/coinjure) package from the same lab. The [research overview](docs/research-review.md#origin-and-contribution-boundaries) distinguishes the inherited foundation from the extensions and reliability changes maintained here. See [NOTICE](NOTICE) for the retained license text.
 
 We acknowledge the foundational work of the Coinjure team at the University of Illinois Urbana-Champaign—Haofei Yu, Yicheng Yang, Yuxiang Liu, and Prof. Jiaxuan You—on which Oracle3 builds.
 

@@ -1,6 +1,6 @@
 {
-  "title": "Oracle3: Trading Engine and MCP Server for Prediction-Market Arbitrage",
-  "description": "Oracle3 is an open-source trading engine and Model Context Protocol server for prediction markets. It maps logical relations between event contracts, checks whether quoted prices violate the axioms of probability after each venue's published fees, and trades the baskets that survive, live on Kalshi, Polymarket and Solana or on paper, under pre-trade risk limits. It includes six constraint-based, two statistical-arbitrage and two model-driven strategies, and a fair-value engine based on the Wang transform calibrated on 291,309 resolved contracts. The original U Lab portions are MIT-licensed; see NOTICE.",
+  "title": "Oracle3: Agent Tools and Execution Infrastructure for Prediction Markets",
+  "description": "Oracle3 provides agent tools and execution infrastructure for prediction markets: public market data, fee-aware checks conditional on supplied relationships, and a local paper ledger through MCP, plus a separate Python trading engine. Development work includes explicit execution states and reproducible failure traces. The software builds on U Lab and Coinjure; see NOTICE for upstream attribution and licensing. Software regression results do not establish LLM effectiveness or live profitability.",
   "creators": [
     {
       "name": "Yang, Yicheng",
@@ -25,7 +25,9 @@
     "quantitative finance",
     "market microstructure",
     "Wang transform",
-    "Python"
+    "Python",
+    "agent environment reliability",
+    "reproducible failure traces"
   ],
   "communities": [
     {
@@ -41,7 +43,7 @@
     },
     {
       "scheme": "url",
-      "identifier": "https://github.com/ulab-uiuc/prediction-market-cli",
+      "identifier": "https://github.com/ulab-uiuc/coinjure",
       "relation": "isDerivedFrom",
       "resource_type": "software"
     },
@@ -60,7 +62,7 @@
   ],
   "references": [
     "Yang, Y. (2026). Pricing Prediction Markets: Incomplete Markets, Selection Rules, and Calibration Wedges. SSRN Working Paper 6468338. https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6468338",
-    "Yu, H., Yang, Y., Liu, Y. and You, J. (2026). Coinjure: An Agent-Native Trading System for Prediction Markets. University of Illinois Urbana-Champaign. https://github.com/ulab-uiuc/prediction-market-cli",
+    "Yu, H., Yang, Y., Liu, Y. and You, J. (2026). Coinjure: An Agent-Native Trading System for Prediction Markets. University of Illinois Urbana-Champaign. https://github.com/ulab-uiuc/coinjure",
     "Wang, S. S. (2000). A Class of Distortion Operators for Pricing Financial and Insurance Risks. Journal of Risk and Insurance, 67(1), 15-36.",
     "Thaler, R. H. and Ziemba, W. T. (1988). Anomalies: Parimutuel Betting Markets: Racetracks and Lotteries. Journal of Economic Perspectives, 2(2), 161-174.",
     "Snowberg, E. and Wolfers, J. (2010). Explaining the Favorite-Long Shot Bias. Journal of Political Economy, 118(4), 723-746."

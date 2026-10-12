@@ -1,7 +1,8 @@
 cff-version: 1.2.0
-title: 'Oracle3: Trading Engine and MCP Server for Prediction-Market Arbitrage'
+title: 'Oracle3: Agent Tools and Execution Infrastructure for Prediction Markets'
 message: >-
-  If you use this software, please cite both the software and the working paper.
+  Cite this software for Oracle3 and Coinjure for the inherited code.
+  Cite the separate pricing paper when using its model or results.
 type: software
 authors:
   - given-names: Yicheng
@@ -17,14 +18,13 @@ identifiers:
     value: 10.5281/zenodo.20062549
     description: Software DOI (Zenodo) for v1.1.1 and later releases
 abstract: >-
-  Oracle3 is an open-source trading engine and Model Context Protocol server
-  for prediction markets. It maps logical relations between event contracts,
-  checks whether quoted prices violate the axioms of probability after each
-  venue's published fees, and trades the baskets that survive, live on Kalshi,
-  Polymarket and Solana or on paper, under pre-trade risk limits. It includes six
-  constraint-based, two statistical-arbitrage and two model-driven strategies,
-  and a fair-value engine based on the Wang transform calibrated on 291,309
-  resolved contracts.
+  Oracle3 provides agent tools and execution infrastructure for prediction markets.
+  It exposes public market data, fee-aware checks conditional on supplied
+  relationships, and a local paper ledger through MCP, alongside a separate
+  Python trading engine. Development work includes explicit execution states
+  and reproducible failure traces. Oracle3 builds on U Lab and Coinjure, with
+  upstream attribution and licensing retained in NOTICE. Software regression
+  results do not establish LLM effectiveness or live profitability.
 keywords:
   - prediction-markets
   - kalshi
@@ -55,16 +55,11 @@ references:
       - given-names: Jiaxuan
         family-names: You
     year: 2026
-    url: 'https://github.com/ulab-uiuc/prediction-market-cli'
-preferred-citation:
-  type: article
-  title: >-
-    Pricing Prediction Markets: Incomplete Markets, Selection Rules, and
-    Calibration Wedges
-  authors:
-    - given-names: Yicheng
-      family-names: Yang
-      affiliation: University of Illinois Urbana-Champaign
-  year: 2026
-  url: 'https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6468338'
-  notes: 'SSRN working paper 6468338'
+    url: 'https://github.com/ulab-uiuc/coinjure'
+  - type: article
+    title: 'Pricing Prediction Markets: Incomplete Markets, Selection Rules, and Calibration Wedges'
+    authors:
+      - given-names: Yicheng
+        family-names: Yang
+    year: 2026
+    url: 'https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6468338'

@@ -2,10 +2,10 @@
   "@context": "https://w3id.org/codemeta/3.0",
   "@type": "SoftwareSourceCode",
   "name": "Oracle3",
-  "description": "Open-source trading engine and MCP server for prediction markets. Finds prices of related event contracts that violate probability bounds after each venue's published fees and trades them live on Kalshi, Polymarket and Solana, or on paper, under pre-trade risk limits.",
+  "description": "Oracle3 provides agent tools and execution infrastructure for prediction markets: public market data, fee-aware checks conditional on supplied relationships, and a local paper ledger through MCP, plus a separate Python trading engine. Development work includes explicit execution states and reproducible failure traces. The software builds on U Lab and Coinjure; see NOTICE for upstream attribution and licensing. Software regression results do not establish LLM effectiveness or live profitability.",
   "version": "1.2.2",
   "softwareVersion": "1.2.2",
-  "dateModified": "2026-09-30",
+  "dateModified": "2026-10-12",
   "license": "https://spdx.org/licenses/Apache-2.0",
   "codeRepository": "https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent",
   "url": "https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/",
@@ -24,7 +24,7 @@
     "Windows"
   ],
   "developmentStatus": "active",
-  "applicationCategory": "Finance; Quantitative research; AI agent tooling",
+  "applicationCategory": "AI agent tooling; Stateful execution; Prediction-market research",
   "keywords": [
     "prediction markets",
     "Kalshi",
@@ -38,7 +38,9 @@
     "MCP server",
     "AI agents",
     "quantitative finance",
-    "market microstructure"
+    "market microstructure",
+    "agent environment reliability",
+    "reproducible failure traces"
   ],
   "author": [
     {
@@ -62,7 +64,7 @@
     }
   ],
   "isBasedOn": [
-    "https://github.com/ulab-uiuc/prediction-market-cli"
+    "https://github.com/ulab-uiuc/coinjure"
   ],
   "referencePublication": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6468338",
   "readme": "https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/blob/main/README.md",

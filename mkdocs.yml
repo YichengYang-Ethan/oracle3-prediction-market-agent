@@ -50,6 +50,7 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Research overview: research-review.md
   - Agent quickstart: agent-quickstart.md
   - MCP server: mcp.md
   - Agent contract harness: agent-harness.md
