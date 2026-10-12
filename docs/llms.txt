@@ -15,12 +15,14 @@
 - Use `check_constraint` for supplied quotes without network access; use `check_constraint_live` for public live quotes and venue fee schedules. Relation labels are `implication`, `exclusivity`, `complement`, `same_event`, and `event_sum`.
 - A result is conditional on the caller's relation and full fills at the quoted prices. The checker does not verify settlement rules or executable depth. On current main, `assessment` explicitly marks relation and execution as unverified. A positive gross violation can have a negative edge after fees.
 - `get_market` returns Kalshi `rules_primary` and `rules_secondary`, and Polymarket `rules` and `resolution_source`, when available from the venue. If these fields are missing or ambiguous, check the venue's contract rules before treating markets as equivalent.
-- `paper_order` buys against a live-book snapshot and writes a local ledger. `paper_portfolio` reads it; `paper_reset(confirm=true)` erases its positions/history. The ledger carries positions at cost and does not track resolution or P&L. No MCP tool places real orders.
+- `paper_order` buys against a live-book snapshot and writes a local ledger. Quantity must be finite and positive; limit price finite and strictly between 0 and 1. Invalid order inputs fail before venue HTTP. The ledger carries positions at cost and does not track resolution or P&L. No MCP tool places real orders.
+- For safe paper retries, supply optional nonblank `request_id`. Once a result is saved, the same key and identical venue/market/side/quantity/limit return it; changed intent is an error. Unfilled/rejected results are remembered too. Omit the key only when each call should be a new order. `paper_reset` with `{"confirm":true}` clears positions, fills and retry history; `paper_portfolio` takes `{}`.
+- Ledger operations lock across cooperating processes on a local filesystem and write atomically. A shared path is one paper account, not separate user state. Valid older JSON loads automatically. Corrupt/nonfinite/inconsistent ledgers fail closed and remain intact, even on reset: preserve a copy, restore a valid backup or set a fresh `ORACLE3_MCP_LEDGER` path and restart. Do not edit the file or remove its `.lock` sidecar while servers use it.
 - `fair_value` returns a probability implied by a chosen Wang-transform parameter, not independently verified event truth. Recorded or fitted relations also require interpretation.
 
 ## Install and source
 
-`pip install oracle3` and `uvx --from oracle3 oracle3-mcp` use the published package, which can lag main. The new assessment fields and regression runner are documented for a main checkout; follow the agent quickstart to install that checkout and configure its absolute `oracle3-mcp` executable. Package installation alone does not install skills into a client.
+`pip install oracle3` and `uvx --from oracle3 oracle3-mcp` use the published package, which can lag main. The new assessment fields, paper retry handling and regression runner are documented for a main checkout; follow the agent quickstart to install that checkout and configure its absolute `oracle3-mcp` executable. Package installation alone does not install skills into a client.
 
 - [Repository](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent)
 - [README](https://raw.githubusercontent.com/YichengYang-Ethan/oracle3-prediction-market-agent/main/README.md)
@@ -37,3 +39,7 @@
 - [oracle3-extras](https://github.com/YichengYang-Ethan/oracle3-extras): experimental venue, data, and wallet integrations; its venue coverage does not imply equivalent MCP support in core Oracle3
 - [Open problems](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/issues?q=is%3Aissue+label%3Aopen-problem)
 - [Discussions](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/discussions)
+
+## Project background
+
+- [Project overview and contributions](https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/research-review/): Yicheng Yang's work at U Lab, Oracle3's extensions to the Coinjure foundation, MCP tools, reusable Skills, and directions for agent evaluation.
