@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import time
 from decimal import Decimal
+from unittest.mock import MagicMock
 
 import pytest
 
 from oracle3.strategy.contrib.cross_market_arbitrage_strategy import (
+    ArbPosition,
     CrossMarketArbitrageStrategy,
     TickerGrouper,
     _normalize,
 )
-from oracle3.ticker.ticker import PolyMarketTicker, SolanaTicker
+from oracle3.ticker.ticker import KalshiTicker, PolyMarketTicker, SolanaTicker
 
 
 class TestNormalize:
@@ -136,3 +139,77 @@ class TestCrossMarketArbitrageStrategy:
         )
         s.bind_context(event, trader)
         await s.process_event(event, trader)
+
+
+def _thin_fed_spread(strategy: CrossMarketArbitrageStrategy) -> tuple[str, str]:
+    """Kalshi YES at 0.48 vs Polymarket YES at 0.50: 0.02 gross per contract."""
+    name = 'Fed cuts rates in December'
+    kalshi = KalshiTicker('KXFED-26DEC', name, market_ticker='KXFED-26DEC')
+    poly = PolyMarketTicker('PM_FED_YES', name, market_id='pm-fed')
+    strategy.register_price('kalshi', kalshi, Decimal('0.48'))
+    strategy.register_price('polymarket', poly, Decimal('0.50'))
+    return kalshi.symbol, poly.symbol
+
+
+class TestCrossMarketArbitrageFees:
+    def test_published_fees_reject_spread_below_fee_hurdle(self):
+        # Kalshi's taker fee at 0.48 and Polymarket's default at 0.50 are each
+        # about 0.0175 per contract, so 0.02 gross is a net loss. The former
+        # flat 0.005 per side reported 0.01 net edge here.
+        s = CrossMarketArbitrageStrategy(min_edge=0.005)
+        _thin_fed_spread(s)
+        assert s.find_arbitrage_opportunities() == []
+
+    def test_market_fee_terms_override_the_schedules(self):
+        s = CrossMarketArbitrageStrategy(
+            min_edge=0.005,
+            market_fee_terms={
+                'KXFED-26DEC': {'fee_type': 'quadratic', 'fee_multiplier': 0},
+                'pm-fed': {'rate': 0},
+            },
+        )
+        _thin_fed_spread(s)
+        [opp] = s.find_arbitrage_opportunities()
+        assert opp['direction'] == 'buy_a_sell_b'
+        assert opp['net_edge'] == pytest.approx(0.02)
+        assert opp['fees'] == 0
+
+    def test_explicit_flat_fee_per_side_still_applies(self):
+        s = CrossMarketArbitrageStrategy(min_edge=0.005, fee_per_side=0.005)
+        _thin_fed_spread(s)
+        [opp] = s.find_arbitrage_opportunities()
+        assert opp['net_edge'] == pytest.approx(0.01)
+
+    def test_venue_without_shared_schedule_needs_explicit_fee(self):
+        s = CrossMarketArbitrageStrategy(min_edge=0.03)
+        s.register_price(
+            'polymarket',
+            PolyMarketTicker(symbol='P', name='Same Event', market_id='b'),
+            Decimal('0.40'),
+        )
+        s.register_price(
+            'dflow',
+            SolanaTicker(symbol='D', name='Same Event', market_ticker='d'),
+            Decimal('0.50'),
+        )
+        assert s.find_arbitrage_opportunities() == []
+
+    # Gross edge of +/-0.02 minus 0.01748 (Kalshi) and 0.0175 (Polymarket).
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'state,net', [('long_a_short_b', -0.01498), ('long_b_short_a', -0.05498)]
+    )
+    async def test_exit_check_uses_schedule_fees(self, state, net):
+        s = CrossMarketArbitrageStrategy(exit_threshold=0.005)
+        symbol_a, symbol_b = _thin_fed_spread(s)
+        s._positions['fed'] = ArbPosition(
+            state=state,
+            entry_time=time.monotonic(),
+            ticker_a_symbol=symbol_a,
+            ticker_b_symbol=symbol_b,
+            label='fed',
+        )
+        await s._check_exits(MagicMock())  # no holdings to sell
+        [decision] = s.get_decisions()
+        assert decision.action == 'ARB_EXIT_SPREAD_COLLAPSED'
+        assert decision.signal_values['current_net_edge'] == pytest.approx(net)
