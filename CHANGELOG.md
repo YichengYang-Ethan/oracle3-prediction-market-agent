@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `oracle3.ml`, a machine-learning layer for calibrated probabilities: resumable read-only collection of resolved Kalshi and Polymarket contracts with price histories, leakage-safe snapshot features (displayed price, time to the scheduled end, recent price changes and volatility, Kalshi spread and volume, category), event-grouped purged walk-forward cross-validation with tuning and isotonic recalibration on training folds only, and a benchmark of penalized logistic regression, LightGBM, random forest and an MLP against market prices and the paper's Wang model. Results are in `evidence/ml_calibration/` and [docs/ml.md](docs/ml.md).
+- MCP tool `model_probability` (14 tools in total): the served model's calibrated probability for an open market next to its market price, with its out-of-sample scores. Requires the new `ml` extra: `pip install 'oracle3[ml]'`.
+
 ## [1.2.2] - 2026-09-30
 
 ### Changed

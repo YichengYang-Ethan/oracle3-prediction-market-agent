@@ -100,6 +100,10 @@ the supplied relation; they do not verify resolution rules, order-book depth
 or full fills. Results explicitly mark relation_verified and execution_verified
 false. Read both markets' resolution rules before relying on a result.
 
+model_probability returns a calibrated probability for one open market from a
+model trained on resolved contracts, next to the market price and the model's
+out-of-sample scores against market prices.
+
 Fees follow each market's own schedule from the venue API: Kalshi taker
 0.07*M*C*P*(1-P) (maker 0.0175*M*C*P*(1-P) only on series with maker fees),
 Polymarket taker rate*C*p*(1-p), Polymarket makers free.
@@ -544,6 +548,36 @@ def fair_value(
         'implied_probability': implied,
         'premium': market_price - implied,
     }
+
+
+@mcp.tool(annotations=READ)
+@_agent_errors
+async def model_probability(venue: VenueArg, market_id: MarketIdArg) -> dict[str, Any]:
+    """Get oracle3's calibrated machine-learning probability for one open market, next to its market price.
+
+    The model was trained on resolved Kalshi and Polymarket contracts using only
+    information available at prediction time: the displayed price, time to the
+    scheduled end, recent price changes and volatility, spread and traded volume
+    (Kalshi), and category. It was tuned with event-grouped, purged walk-forward
+    cross-validation and recalibrated with isotonic regression on training folds.
+    The features are rebuilt from the venue's public API at call time, so no
+    account is needed. Returns model_probability, market_price, their difference,
+    the model's out-of-sample scores against market prices and the features used.
+    It is an estimate, not a trading signal; read the rules with get_market.
+    Requires the ML extra: pip install 'oracle3[ml]'.
+    """
+    venue = venues.check_venue(venue)
+    try:
+        from oracle3.ml.serve import score_market
+
+        return await score_market(venue, market_id)
+    except ImportError as exc:
+        raise ToolError(
+            "model_probability needs the ML extra: pip install 'oracle3[ml]' "
+            f'({exc.name or exc} is missing)'
+        ) from exc
+    except FileNotFoundError as exc:
+        raise ToolError(str(exc)) from exc
 
 
 @mcp.tool(annotations=LOCAL_READ)

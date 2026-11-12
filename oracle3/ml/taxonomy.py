@@ -1,0 +1,235 @@
+"""One category scheme for both venues.
+
+Kalshi assigns each series a category; Polymarket tags events. Both are mapped
+onto the same nine labels so a model can share what it learns across venues.
+"""
+
+from __future__ import annotations
+
+CATEGORIES = (
+    'sports',
+    'politics',
+    'economics',
+    'finance',
+    'crypto',
+    'weather',
+    'culture',
+    'science_tech',
+    'other',
+)
+
+_KALSHI = {
+    'sports': 'sports',
+    'elections': 'politics',
+    'politics': 'politics',
+    'world': 'politics',
+    'economics': 'economics',
+    'financials': 'finance',
+    'companies': 'finance',
+    'commodities': 'finance',
+    'business': 'finance',
+    'crypto': 'crypto',
+    'climate and weather': 'weather',
+    'entertainment': 'culture',
+    'mentions': 'culture',
+    'social': 'culture',
+    'culture': 'culture',
+    'science and technology': 'science_tech',
+    'health': 'science_tech',
+}
+
+# Checked in this order; the first label with a matching tag wins.
+_POLY_TAGS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        'crypto',
+        (
+            'crypto',
+            'bitcoin',
+            'ethereum',
+            'solana',
+            'xrp',
+            'dogecoin',
+            'crypto prices',
+            'stablecoins',
+            'defi',
+            'memecoins',
+            'airdrops',
+        ),
+    ),
+    (
+        'sports',
+        (
+            'sports',
+            'nba',
+            'nfl',
+            'mlb',
+            'nhl',
+            'soccer',
+            'football',
+            'basketball',
+            'baseball',
+            'hockey',
+            'tennis',
+            'golf',
+            'ufc',
+            'mma',
+            'boxing',
+            'f1',
+            'formula 1',
+            'cricket',
+            'esports',
+            'epl',
+            'premier league',
+            'champions league',
+            'la liga',
+            'serie a',
+            'bundesliga',
+            'ncaa',
+            'college football',
+            'college basketball',
+            'olympics',
+            'world cup',
+            'chess',
+            'wnba',
+            'mls',
+            'atp',
+            'wta',
+            'nascar',
+            'counter strike',
+            'dota 2',
+            'league of legends',
+            'valorant',
+            'games',
+        ),
+    ),
+    (
+        'weather',
+        (
+            'weather',
+            'climate',
+            'temperature',
+            'hurricanes',
+            'hurricane',
+            'global temp',
+            'precipitation',
+        ),
+    ),
+    (
+        'economics',
+        (
+            'economy',
+            'economics',
+            'fed',
+            'fed rates',
+            'interest rates',
+            'inflation',
+            'cpi',
+            'jobs report',
+            'unemployment',
+            'gdp',
+            'recession',
+            'economic policy',
+            'tariffs',
+            'macro',
+        ),
+    ),
+    (
+        'finance',
+        (
+            'finance',
+            'business',
+            'stocks',
+            'equities',
+            'earnings',
+            'ipos',
+            'ipo',
+            'commodities',
+            'gold',
+            'oil',
+            'tech stocks',
+            'companies',
+            'indices',
+            's&p 500',
+            'nasdaq',
+            'forex',
+        ),
+    ),
+    (
+        'politics',
+        (
+            'politics',
+            'elections',
+            'us politics',
+            'geopolitics',
+            'world',
+            'global elections',
+            'trump',
+            'congress',
+            'senate',
+            'courts',
+            'supreme court',
+            'middle east',
+            'ukraine',
+            'russia',
+            'china',
+            'israel',
+            'iran',
+            'immigration',
+            'world elections',
+            'primaries',
+            'midterms',
+        ),
+    ),
+    (
+        'science_tech',
+        (
+            'tech',
+            'science',
+            'ai',
+            'space',
+            'spacex',
+            'health',
+            'openai',
+            'big tech',
+            'apple',
+            'google',
+        ),
+    ),
+    (
+        'culture',
+        (
+            'pop culture',
+            'culture',
+            'entertainment',
+            'movies',
+            'music',
+            'celebrities',
+            'awards',
+            'tv',
+            'mentions',
+            'tweet markets',
+            'twitter',
+            'elon musk',
+            'youtube',
+            'social media',
+            'oscars',
+            'grammys',
+            'box office',
+            'gaming',
+            'religion',
+        ),
+    ),
+)
+
+
+def kalshi_category(category: str | None, series_ticker: str | None = None) -> str:
+    key = (category or '').strip().lower()
+    return _KALSHI.get(key, 'other')
+
+
+def polymarket_category(tags: list[str], title: str = '') -> str:
+    labels = {str(t).strip().lower() for t in tags if t}
+    for cat, keys in _POLY_TAGS:
+        if labels & set(keys):
+            return cat
+    return 'other'
