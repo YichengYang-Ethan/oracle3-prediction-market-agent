@@ -1,4 +1,4 @@
-"""Out-of-sample benchmark of the four learners against market prices and the paper's model.
+"""Out-of-sample benchmark of eight learners and two ensembles against market prices and the paper's model.
 
 For every outer fold of the event-grouped, purged walk-forward split:
 
@@ -7,10 +7,15 @@ For every outer fold of the event-grouped, purged walk-forward split:
 2. each learner's hyperparameters are chosen by the Brier score of those out-of-fold
    predictions (LightGBM's number of trees by early stopping on each inner block);
 3. an isotonic map is fitted to the chosen configuration's out-of-fold predictions, i.e. on
-   training folds only;
-4. the chosen configuration is refitted on the whole training window and the isotonic map
-   applied to its test predictions;
-5. the Wang baselines are fitted on all training rows; the market baseline needs no fitting.
+   training folds only, and kept only if it passes a check on the same data: fitted on the
+   earlier inner blocks, it must lower the Brier score of the later ones (the refitted model
+   is stronger than the inner ones, so a map that only suits the inner models is dropped);
+4. the chosen configuration is refitted on the whole training window and, when kept, the
+   isotonic map applied to its test predictions;
+5. the Wang baselines and the isotonic recalibration of the market price are fitted on all
+   training rows; the market baseline needs no fitting;
+6. two ensembles combine the learners: the mean of their recalibrated probabilities, and a
+   logistic regression stacked on their log-odds, fitted to the inner out-of-fold predictions.
 
 Scores are computed on the test rows only and pooled across folds. Intervals resample whole
 events. The model behind the MCP tool is then fitted the same way on all rows.
@@ -36,6 +41,7 @@ from oracle3.ml.features import FEATURES, KALSHI_ONLY
 from oracle3.ml.metrics import brier, cluster_bootstrap, ece, reliability, score
 from oracle3.ml.models import (
     LEARNERS,
+    SERVABLE,
     Learner,
     WangBaseline,
     design,
@@ -44,7 +50,8 @@ from oracle3.ml.models import (
 )
 
 ISO_CLIP = 1e-4
-BASELINES = ('market', 'wang', 'wang_hier')
+BASELINES = ('market', 'market_isotonic', 'wang', 'wang_hier')
+ENSEMBLES = ('ensemble_mean', 'stacked')
 
 
 def fit_isotonic(p: np.ndarray, y: np.ndarray) -> Any:
@@ -104,6 +111,68 @@ def tune(
     return best[1], best[2], best[3]
 
 
+def isotonic_helps(
+    oof: np.ndarray, y_oof: np.ndarray, block_sizes: list[int]
+) -> tuple[bool, dict[str, float]]:
+    """Does isotonic recalibration, fitted on earlier inner blocks, lower the Brier score of later ones?
+
+    Uses only training-window out-of-fold predictions. Later blocks are predicted by models fitted on
+    more data, as the refitted model is, so the check mirrors how the map will be used.
+    """
+    edges = np.cumsum([0, *block_sizes])
+    raw, cal, ys = [], [], []
+    for j in range(1, len(block_sizes)):
+        lo, hi = int(edges[j]), int(edges[j + 1])
+        if lo == 0 or hi == lo:
+            continue
+        iso = fit_isotonic(oof[:lo], y_oof[:lo])
+        raw.append(oof[lo:hi])
+        cal.append(apply_isotonic(iso, oof[lo:hi]))
+        ys.append(y_oof[lo:hi])
+    if not ys:
+        return False, {}
+    yv = np.concatenate(ys)
+    b_raw, b_iso = brier(np.concatenate(raw), yv), brier(np.concatenate(cal), yv)
+    return b_iso < b_raw, {'inner_brier_raw': b_raw, 'inner_brier_isotonic': b_iso}
+
+
+def fit_pipeline_oof(
+    learner: Learner,
+    X: pd.DataFrame,
+    y: np.ndarray,
+    train_idx: np.ndarray,
+    pairs: list[tuple[np.ndarray, np.ndarray]],
+    log: list[dict[str, Any]],
+    fold: int,
+) -> tuple[Any, Any, dict[str, Any], np.ndarray, np.ndarray]:
+    """Tune, fit the isotonic map on the inner out-of-fold predictions, refit on the whole window."""
+    params, oof, oof_rows = tune(learner, X, y, pairs, log, fold)
+    iso = fit_isotonic(oof, y[oof_rows])
+    est, _ = fit_learner(learner, dict(params), X.iloc[train_idx], y[train_idx])
+    return est, iso, params, oof, oof_rows
+
+
+def recalibrate(
+    learner: Learner,
+    oof: np.ndarray,
+    y_oof: np.ndarray,
+    pairs: list[tuple[np.ndarray, np.ndarray]],
+    log: list[dict[str, Any]],
+    fold: int,
+) -> bool:
+    """Decide on training data whether this learner's isotonic map is kept, and log why."""
+    keep, check = isotonic_helps(oof, y_oof, [len(v) for _, v in pairs])
+    log.append(
+        {
+            'fold': fold,
+            'model': learner.name,
+            'recalibration': 'isotonic' if keep else 'none',
+            **check,
+        }
+    )
+    return keep
+
+
 def fit_pipeline(
     learner: Learner,
     X: pd.DataFrame,
@@ -113,10 +182,28 @@ def fit_pipeline(
     log: list[dict[str, Any]],
     fold: int,
 ) -> tuple[Any, Any, dict[str, Any]]:
-    params, oof, oof_rows = tune(learner, X, y, pairs, log, fold)
-    iso = fit_isotonic(oof, y[oof_rows])
-    est, _ = fit_learner(learner, dict(params), X.iloc[train_idx], y[train_idx])
+    est, iso, params, _, _ = fit_pipeline_oof(
+        learner, X, y, train_idx, pairs, log, fold
+    )
     return est, iso, params
+
+
+def _logit(p: np.ndarray) -> np.ndarray:
+    p = np.clip(np.asarray(p, float), ISO_CLIP, 1 - ISO_CLIP)
+    return np.log(p / (1 - p))
+
+
+def fit_stacker(oof: dict[str, np.ndarray], y: np.ndarray) -> Any:
+    """Logistic regression on the learners' out-of-fold log-odds (training folds only)."""
+    from sklearn.linear_model import LogisticRegression
+
+    Z = np.column_stack([_logit(oof[name]) for name in sorted(oof)])
+    return LogisticRegression(C=1.0, max_iter=1000).fit(Z, y)
+
+
+def apply_stacker(stacker: Any, raw: dict[str, np.ndarray]) -> np.ndarray:
+    Z = np.column_stack([_logit(raw[name]) for name in sorted(raw)])
+    return np.clip(stacker.predict_proba(Z)[:, 1], ISO_CLIP, 1 - ISO_CLIP)
 
 
 def _jsonable(obj: Any) -> Any:
@@ -154,25 +241,45 @@ def run_cv(
         out = pd.DataFrame({'row': fold.test, 'fold': fold.k})
         out['market'] = test['price'].to_numpy(float)
         train_df = df.iloc[fold.train]
+        out['market_isotonic'] = apply_isotonic(
+            fit_isotonic(train_df['price'].to_numpy(float), y[fold.train]),
+            out['market'].to_numpy(float),
+        )
         out['wang'] = WangBaseline().fit(train_df).predict(test)
         out['wang_hier'] = WangBaseline(hierarchical=True).fit(train_df).predict(test)
         chosen = {}
+        oof_by: dict[str, np.ndarray] = {}
+        raw_by: dict[str, np.ndarray] = {}
+        stack_rows: np.ndarray | None = None
         for learner in LEARNERS:
             t0 = time.time()
-            est, iso, params = fit_pipeline(
+            est, iso, params, oof, oof_at = fit_pipeline_oof(
                 learner, X, y, fold.train, pairs, tuning, fold.k
             )
+            assert stack_rows is None or np.array_equal(stack_rows, oof_at)
+            stack_rows = oof_at
+            keep_iso = recalibrate(learner, oof, y[oof_at], pairs, tuning, fold.k)
             raw = predict(est, X.iloc[fold.test])
+            oof_by[learner.name], raw_by[learner.name] = oof, raw
             out[f'{learner.name}_raw'] = raw
-            out[learner.name] = apply_isotonic(iso, raw)
+            out[f'{learner.name}_isotonic'] = apply_isotonic(iso, raw)
+            out[learner.name] = (
+                out[f'{learner.name}_isotonic']
+                if keep_iso
+                else np.clip(raw, ISO_CLIP, 1 - ISO_CLIP)
+            )
             chosen[learner.name] = {
                 'params': _jsonable(params),
+                'recalibration': 'isotonic' if keep_iso else 'none',
                 'seconds': round(time.time() - t0, 1),
             }
             print(
                 f'[cv] fold {fold.k} {learner.name} done in {time.time() - t0:.0f}s params={params}',
                 flush=True,
             )
+        out['ensemble_mean'] = out[[lr.name for lr in LEARNERS]].mean(axis=1)
+        assert stack_rows is not None
+        out['stacked'] = apply_stacker(fit_stacker(oof_by, y[stack_rows]), raw_by)
         preds.append(out)
         fold_info.append(
             {
@@ -197,10 +304,12 @@ def _iso(ts: float) -> str:
     return pd.Timestamp(ts, unit='s', tz='UTC').strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
+# Each learner: recalibration chosen on training data (the method), plus both variants for reference.
+MAIN_METHODS = (*BASELINES, *(lr.name for lr in LEARNERS), *ENSEMBLES)
 METHODS = (
-    *BASELINES,
-    *(lr.name for lr in LEARNERS),
+    *MAIN_METHODS,
     *(f'{lr.name}_raw' for lr in LEARNERS),
+    *(f'{lr.name}_isotonic' for lr in LEARNERS),
 )
 
 
@@ -217,6 +326,23 @@ def summarize(df: pd.DataFrame, preds: pd.DataFrame, n_boot: int) -> dict[str, A
     vs_market: dict[str, Any] = {}
     for m in METHODS:
         if m == 'market':
+            continue
+        if (
+            m not in MAIN_METHODS
+        ):  # variants: point estimates only, to keep the bootstrap affordable
+            vs_market[m] = {
+                'brier_reduction_pct': 100.0
+                * (1.0 - pooled[m]['brier'] / pooled['market']['brier']),
+                'ece_reduction_pct': 100.0
+                * (1.0 - pooled[m]['ece'] / pooled['market']['ece']),
+                'folds_beating_market_on_brier': int(
+                    sum(
+                        per_fold[k][m]['brier'] < per_fold[k]['market']['brier']
+                        for k in per_fold
+                    )
+                ),
+                'folds': len(per_fold),
+            }
             continue
         pm = preds[m].to_numpy(float)
 
@@ -253,6 +379,9 @@ def summarize(df: pd.DataFrame, preds: pd.DataFrame, n_boot: int) -> dict[str, A
     learners = [lr.name for lr in LEARNERS]
     best = min(learners, key=lambda m: pooled[m]['brier'])
     best_ece = min(learners, key=lambda m: pooled[m]['ece'])
+    best_servable = min(SERVABLE, key=lambda m: pooled[m]['brier'])
+    candidates = [*learners, *ENSEMBLES]
+    best_overall = min(candidates, key=lambda m: pooled[m]['brier'])
     sub = df.iloc[rows].reset_index(drop=True)
     sub['liquidity'] = liquidity_bucket(sub)
     breakdown: dict[str, dict[str, Any]] = {}
@@ -262,7 +391,7 @@ def summarize(df: pd.DataFrame, preds: pd.DataFrame, n_boot: int) -> dict[str, A
             idx = part.index.to_numpy()
             breakdown[key][str(val)] = {
                 m: score(preds[m].to_numpy(float)[idx], y[idx])
-                for m in ('market', 'wang', best)
+                for m in dict.fromkeys(('market', 'wang', best, best_servable))
             }
     return {
         'pooled': pooled,
@@ -270,12 +399,14 @@ def summarize(df: pd.DataFrame, preds: pd.DataFrame, n_boot: int) -> dict[str, A
         'vs_market': vs_market,
         'best_by_brier': best,
         'best_by_ece': best_ece,
+        'best_servable_by_brier': best_servable,
+        'best_overall_by_brier': best_overall,
         'any_learner_beats_market_on_brier': any(
             pooled[m]['brier'] < pooled['market']['brier'] for m in learners
         ),
         'reliability': {
             m: reliability(preds[m].to_numpy(float), y)
-            for m in ('market', 'wang', best)
+            for m in dict.fromkeys(('market', 'wang', best, best_servable))
         },
         'breakdown': breakdown,
     }
@@ -383,9 +514,9 @@ def main(argv: list[str] | None = None) -> None:
 
         bundle_info = train_bundle(
             df,
-            summary['best_by_brier']
+            summary['best_servable_by_brier']
             if summary['any_learner_beats_market_on_brier']
-            else summary['best_by_ece'],
+            else min(SERVABLE, key=lambda m: summary['pooled'][m]['ece']),
             a.bundle,
             a.inner_blocks,
             a.embargo_hours * 3600.0,

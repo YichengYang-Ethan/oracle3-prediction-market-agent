@@ -53,7 +53,7 @@ def train_bundle(
     cv_summary: dict[str, Any],
 ) -> dict[str, Any]:
     """Fit ``model_name`` on all snapshots the way each CV fold was fitted, and save it."""
-    from oracle3.ml.benchmark import fit_isotonic, tune
+    from oracle3.ml.benchmark import fit_isotonic, recalibrate, tune
     from oracle3.ml.models import LEARNERS, design, fit_learner
 
     learner = next(lr for lr in LEARNERS if lr.name == model_name)
@@ -68,6 +68,7 @@ def train_bundle(
     )
     log: list[dict[str, Any]] = []
     params, oof, oof_rows = tune(learner, X, y, pairs, log, fold=0)
+    keep_iso = recalibrate(learner, oof, y[oof_rows], pairs, log, fold=0)
     iso = fit_isotonic(oof, y[oof_rows])
     est, _ = fit_learner(learner, params, X, y)
     out.mkdir(parents=True, exist_ok=True)
@@ -82,11 +83,12 @@ def train_bundle(
         model_file = out / 'model.joblib'
         joblib.dump(est, model_file, compress=3)
     iso_file = out / 'isotonic.json'
+    # When the training-data check rejected recalibration, the map is the identity.
     iso_file.write_text(
         json.dumps(
             {
-                'x': [float(v) for v in iso.X_thresholds_],
-                'y': [float(v) for v in iso.y_thresholds_],
+                'x': [float(v) for v in iso.X_thresholds_] if keep_iso else [0.0, 1.0],
+                'y': [float(v) for v in iso.y_thresholds_] if keep_iso else [0.0, 1.0],
             }
         )
     )
@@ -96,6 +98,7 @@ def train_bundle(
         'version': 1,
         'model': model_name,
         'params': params,
+        'recalibration': 'isotonic' if keep_iso else 'none',
         'features': list(FEATURES),
         'trained_on': {
             'snapshots': int(len(df)),
@@ -128,6 +131,7 @@ def train_bundle(
         'dir': str(out),
         'model': model_name,
         'params': params,
+        'recalibration': 'isotonic' if keep_iso else 'none',
         'files': manifest['files'],
     }
 

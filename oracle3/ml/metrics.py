@@ -76,13 +76,18 @@ def cluster_bootstrap(
     rng = np.random.default_rng(seed)
     groups = np.asarray(groups)
     uniq, inverse = np.unique(groups, return_inverse=True)
-    members: list[list[int]] = [[] for _ in range(len(uniq))]
-    for row, g in enumerate(inverse):
-        members[g].append(row)
-    members_arr = [np.asarray(m) for m in members]
+    order = np.argsort(
+        inverse, kind='stable'
+    )  # rows grouped by event, ascending within each
+    counts = np.bincount(inverse, minlength=len(uniq))
+    starts = np.concatenate([[0], np.cumsum(counts)[:-1]])
     vals = np.empty(n_boot)
     for b in range(n_boot):
         pick = rng.integers(0, len(uniq), len(uniq))
-        rows = np.concatenate([members_arr[i] for i in pick])
-        vals[b] = stat(rows)
+        lens = counts[pick]
+        # the drawn events' rows, concatenated in draw order, without a Python-level loop
+        offsets = np.repeat(starts[pick] - np.cumsum(lens) + lens, lens) + np.arange(
+            lens.sum()
+        )
+        vals[b] = stat(order[offsets])
     return float(np.percentile(vals, 2.5)), float(np.percentile(vals, 97.5))

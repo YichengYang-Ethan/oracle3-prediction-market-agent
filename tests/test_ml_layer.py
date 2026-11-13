@@ -489,6 +489,60 @@ def test_kalshi_bars_are_not_cached_when_a_request_fails(tmp_path):
     assert col.candles_of(job) == 0
 
 
+def test_isotonic_is_kept_only_when_it_helps_later_inner_blocks():
+    from oracle3.ml.benchmark import isotonic_helps
+
+    rng = np.random.default_rng(0)
+    n = 3000
+    q = rng.uniform(0.05, 0.95, 3 * n)
+    y = (rng.random(3 * n) < q).astype(int)
+    biased = np.clip(q + 0.2, 0.0, 1.0)  # every inner block over-predicts the same way
+    keep, check = isotonic_helps(biased, y, [n, n, n])
+    assert keep and check['inner_brier_isotonic'] < check['inner_brier_raw']
+    # only the first block is biased; a map learned from it would distort the later ones
+    first_only = np.concatenate([biased[:n], q[n:]])
+    keep, check = isotonic_helps(first_only, y, [n, n, n])
+    assert not keep and check['inner_brier_isotonic'] > check['inner_brier_raw']
+
+
+@pytest.mark.parametrize(
+    'name',
+    [
+        'logistic',
+        'spline_logistic',
+        'random_forest',
+        'lightgbm',
+        'lightgbm_monotone',
+        'xgboost',
+        'catboost',
+        'mlp',
+    ],
+)
+def test_every_learner_tunes_refits_and_predicts(name):
+    from oracle3.ml.features import KALSHI_ONLY, NUMERIC_FEATURES
+    from oracle3.ml.models import LEARNERS, fit_learner, predict
+
+    if name in ('xgboost', 'catboost'):
+        pytest.importorskip(name)
+    learner = next(lr for lr in LEARNERS if lr.name == name)
+    rng = np.random.default_rng(1)
+    n = 600
+    X = pd.DataFrame(rng.normal(size=(n, len(FEATURES))), columns=list(FEATURES))
+    binary = [f for f in FEATURES if f not in NUMERIC_FEATURES]
+    X[binary] = rng.integers(0, 2, (n, len(binary))).astype(float)
+    X['price'] = rng.uniform(0.05, 0.95, n)
+    X['logit_price'] = np.log(X['price'] / (1 - X['price']))
+    X.loc[X['is_kalshi'] == 0, list(KALSHI_ONLY)] = np.nan  # Polymarket rows
+    y = (rng.random(n) < X['price']).astype(int).to_numpy()
+    est, used = fit_learner(
+        learner, dict(learner.grid[0]), X[:400], y[:400], X[400:], y[400:]
+    )
+    if learner.early_stopping:
+        assert used['n_estimators'] >= 1
+    p = predict(fit_learner(learner, used, X, y)[0], X)
+    assert p.shape == (n,) and np.all((p > 0) & (p < 1))
+
+
 def test_polymarket_listing_weeks_sit_on_a_fixed_grid():
     from oracle3.ml.collect import PolymarketCollector, iso_ts
 

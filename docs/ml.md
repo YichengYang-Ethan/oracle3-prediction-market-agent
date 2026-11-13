@@ -15,10 +15,14 @@ price histories into a resumable cache. Every request is a read-only GET; Kalshi
 when `KALSHI_API_KEY_ID` and `KALSHI_PRIVATE_KEY_PATH` are set (or given in `--env-file`), which only
 raises the rate limit.
 
-- **Kalshi:** settled events of every series whose date falls in the window, up to six per series
-  spread evenly over time, capped per category; up to four markets per event, chosen by a seeded hash
-  of the ticker. Bars are the venue's candlesticks (best bid and ask, last trade, volume): one-minute
-  bars for contracts scheduled to live up to two days, hourly up to 120 days, daily beyond.
+- **Kalshi:** settled events from each series' public event listing whose date falls in the window,
+  up to 100 per series spread evenly over time and at most 20,000 per category; up to four markets
+  per event, chosen by a seeded hash of the ticker. Events from before Kalshi moved to `KX` tickers
+  are not in the public listing (they stay in an archive that can be read by exact ticker but not
+  listed), and most current series only began in late 2025 or 2026, so the Kalshi sample is
+  concentrated in 2026 while the Polymarket sample spans the whole window. Bars are the venue's
+  candlesticks (best bid and ask, last trade, volume): one-minute bars for contracts scheduled to
+  live up to two days, hourly up to 120 days, daily beyond.
 - **Polymarket:** closed events from the Gamma API, sampled the same way; binary markets with a
   clean 1/0 payout. Price history comes from the Data API v2 at its finest permanent grain
   (3 hours), so contracts scheduled to live less than a day, and the auto-generated "Up or Down"
@@ -26,6 +30,11 @@ raises the rate limit.
 
 Contracts are chosen before any price or outcome is looked at; lifetime volume, final prices and
 results play no part in the sample.
+
+The defaults reproduce the published sample: scheduled ends from 2024-01-01 to 2026-11-05. The cache
+is gzipped JSON, and a later run with other settings reuses whatever is already cached. Each run
+names its sample after its window and caps and writes a `selection.json`; the dataset is built from
+that selection only, never from everything that happens to be in the cache.
 
 ## Snapshots and features
 
@@ -49,7 +58,8 @@ the API appends to resolved series, is removed.
 
 ## Validation
 
-`python -m oracle3.ml.benchmark --snapshots S.parquet --evidence DIR --bundle DIR`
+`python -m oracle3.ml.benchmark --snapshots S.parquet --evidence DIR --bundle DIR` (install
+`oracle3[ml-bench]`, which adds XGBoost and CatBoost to the base `oracle3[ml]` extra)
 
 - **Event-grouped, purged walk-forward cross-validation.** Events are ordered by their first
   prediction time and cut into consecutive blocks; each fold tests on the next block and trains only on
@@ -58,17 +68,25 @@ the API appends to resolved series, is removed.
 - **Tuning on training data only.** Inside each training window, three purged inner walk-forward blocks
   are each predicted by models fitted on earlier training events; hyperparameters are chosen by the
   Brier score of those out-of-fold predictions, and LightGBM early-stops on them.
-- **Isotonic recalibration** is fitted to the same inner out-of-fold predictions, then applied to the
-  test predictions of the model refitted on the whole training window.
-- **Learners:** L2-penalized logistic regression, LightGBM, random forest, a two-layer MLP.
-  **Baselines:** the market price, and the paper's model (`WangMLE`), both one λ per venue and the
-  hierarchical form with the paper's covariates.
+- **Isotonic recalibration** is fitted to the same inner out-of-fold predictions and kept only if it
+  passes a check on training data: fitted on the earlier inner blocks, it must lower the Brier score
+  of the later ones. The model refitted on the whole window is stronger than the inner models, and a
+  map that only suits the weaker ones would distort it; the report shows both variants.
+- **Learners (eight):** L2-penalized logistic regression; a spline GAM (penalized logistic regression
+  on cubic-spline bases, one smooth curve per feature); random forest; LightGBM; LightGBM constrained
+  to be monotone in the market price; XGBoost; CatBoost; a two-layer MLP.
+  **Ensembles:** the mean of the eight learners' probabilities, and a logistic regression stacked on
+  their log-odds and fitted to the inner out-of-fold predictions.
+  **Baselines:** the market price; the market price recalibrated by isotonic regression alone; and the
+  paper's model (`WangMLE`), both one λ per venue and the hierarchical form with the paper's
+  covariates.
 - **Scores** are computed on test folds only: Brier score, log loss and expected calibration error
   (10 equal-width bins), with 95% intervals from resampling whole events.
 
 ## Serving
 
-The best learner is refitted on all snapshots in the same way and saved with its isotonic map and a
+The best learner whose library is in the base `oracle3[ml]` install (everything except XGBoost and
+CatBoost) is refitted on all snapshots in the same way and saved with its recalibration map and a
 manifest of features, hyperparameters, data range, out-of-sample scores and file hashes (checked on
 load). `model_probability(venue, market_id)` rebuilds the features for an open market from public data
 at call time and returns the model probability next to the market price:

@@ -10,31 +10,35 @@ import sys
 from pathlib import Path
 from typing import Any
 
+LEARNER_LABELS = {
+    'logistic': 'Penalized logistic',
+    'spline_logistic': 'Spline GAM (penalized logistic on spline bases)',
+    'random_forest': 'Random forest',
+    'lightgbm': 'LightGBM',
+    'lightgbm_monotone': 'LightGBM, monotone in price',
+    'xgboost': 'XGBoost',
+    'catboost': 'CatBoost',
+    'mlp': 'MLP',
+}
 LABELS = {
     'market': 'Market price',
+    'market_isotonic': 'Market price + isotonic (price-only recalibration)',
     'wang': 'Wang (paper), λ per venue',
     'wang_hier': 'Wang (paper), hierarchical λ',
-    'logistic': 'Penalized logistic + isotonic',
-    'lightgbm': 'LightGBM + isotonic',
-    'random_forest': 'Random forest + isotonic',
-    'mlp': 'MLP + isotonic',
-    'logistic_raw': 'Penalized logistic (no recalibration)',
-    'lightgbm_raw': 'LightGBM (no recalibration)',
-    'random_forest_raw': 'Random forest (no recalibration)',
-    'mlp_raw': 'MLP (no recalibration)',
+    **LEARNER_LABELS,  # recalibration (isotonic or none) chosen per fold on training data
+    **{f'{k}_raw': f'{v}, no recalibration' for k, v in LEARNER_LABELS.items()},
+    **{f'{k}_isotonic': f'{v}, always isotonic' for k, v in LEARNER_LABELS.items()},
+    'ensemble_mean': 'Ensemble: mean of the eight learners',
+    'stacked': 'Ensemble: logistic stack of the eight learners',
 }
 ORDER = (
     'market',
+    'market_isotonic',
     'wang',
     'wang_hier',
-    'logistic',
-    'lightgbm',
-    'random_forest',
-    'mlp',
-    'logistic_raw',
-    'lightgbm_raw',
-    'random_forest_raw',
-    'mlp_raw',
+    *LEARNER_LABELS,
+    'ensemble_mean',
+    'stacked',
 )
 
 
@@ -85,7 +89,9 @@ def _design(res: dict[str, Any]) -> list[str]:
         'block begins (later-resolving events are purged).',
         f'- Inside each training window, {des["inner_blocks"]} purged inner walk-forward blocks are each '
         'predicted by models fitted only on earlier training events. Hyperparameters are chosen by '
-        f'{des["tuning_metric"]}; LightGBM early-stops on each inner block.',
+        f'{des["tuning_metric"]}; the three boosted-tree libraries early-stop on each inner block.',
+        '- The ensembles combine the eight learners: the mean of their recalibrated probabilities, and a '
+        'logistic regression on their log-odds fitted to the same inner out-of-fold predictions.',
         f'- {des["calibration"]}; the chosen configuration is then refitted on the full training window.',
         f'- Intervals: {des["bootstrap"]}.',
         '',
@@ -128,20 +134,33 @@ def _scores(r: dict[str, Any]) -> list[str]:
         )
     lines += [
         '',
-        'Positive percentages are reductions relative to the market price (lower Brier and ECE are better).',
+        'Positive percentages are reductions relative to the market price (lower Brier and ECE are better). '
+        "Each learner's recalibration (isotonic or none) is chosen per fold on training data; both variants "
+        'are in the recalibration table below.',
         '',
     ]
     best, best_ece = r['best_by_brier'], r['best_by_ece']
+    served = r.get('best_servable_by_brier', best)
+    overall = r.get('best_overall_by_brier', best)
     if r['any_learner_beats_market_on_brier']:
-        v = vs[best]
-        lines += [
-            f'**Best learner: {LABELS[best]}.** Out-of-sample Brier {pooled[best]["brier"]:.5f} vs '
-            f'{pooled["market"]["brier"]:.5f} for market prices ({_pct(v["brier_reduction_pct"])}, 95% CI '
-            f'{_ci(v["brier_reduction_pct_ci95"])}); ECE {pooled[best]["ece"]:.4f} vs '
-            f'{pooled["market"]["ece"]:.4f} ({_pct(v["ece_reduction_pct"])}, 95% CI '
-            f'{_ci(v["ece_reduction_pct_ci95"])}).',
-            '',
-        ]
+        for title, m in dict.fromkeys(
+            (
+                ('Best single learner', best),
+                ('Served by `model_probability`', served),
+                ('Best of all methods', overall),
+            )
+        ):
+            if title != 'Best single learner' and m == best:
+                continue
+            v = vs[m]
+            lines += [
+                f'**{title}: {LABELS[m]}.** Out-of-sample Brier {pooled[m]["brier"]:.5f} vs '
+                f'{pooled["market"]["brier"]:.5f} for market prices ({_pct(v["brier_reduction_pct"])}, 95% CI '
+                f'{_ci(v["brier_reduction_pct_ci95"])}); ECE {pooled[m]["ece"]:.4f} vs '
+                f'{pooled["market"]["ece"]:.4f} ({_pct(v["ece_reduction_pct"])}, 95% CI '
+                f'{_ci(v["ece_reduction_pct_ci95"])}).',
+                '',
+            ]
     else:
         v = vs[best_ece]
         lines += [
@@ -150,21 +169,56 @@ def _scores(r: dict[str, Any]) -> list[str]:
             f'({_pct(v["ece_reduction_pct"])}, 95% CI {_ci(v["ece_reduction_pct_ci95"])}).',
             '',
         ]
+    cols = [
+        m
+        for m in dict.fromkeys(
+            ('market', 'market_isotonic', 'wang_hier', best, served, overall)
+        )
+        if m in pooled
+    ]
     lines += [
         '## Per fold (Brier)',
         '',
-        '| Fold | ' + ' | '.join(LABELS[m] for m in ORDER[:7]) + ' |',
-        '|---:|' + '---:|' * 7,
+        '| Fold | ' + ' | '.join(LABELS[m] for m in cols) + ' |',
+        '|---:|' + '---:|' * len(cols),
     ]
     for k, s in sorted(r['per_fold'].items(), key=lambda kv: int(kv[0])):
         lines.append(
-            f'| {k} | ' + ' | '.join(f'{s[m]["brier"]:.5f}' for m in ORDER[:7]) + ' |'
+            f'| {k} | ' + ' | '.join(f'{s[m]["brier"]:.5f}' for m in cols) + ' |'
+        )
+    return lines
+
+
+def _recalibration(res: dict[str, Any]) -> list[str]:
+    pooled = res['results']['pooled']
+    learners = [k for k in LEARNER_LABELS if f'{k}_isotonic' in pooled]
+    if not learners:
+        return []
+    lines = [
+        '',
+        '## Recalibration check (Brier, test folds)',
+        '',
+        'Isotonic recalibration is kept for a learner in a fold only if, fitted on the earlier inner blocks of '
+        'the training window, it lowers the Brier score of the later ones.',
+        '',
+        '| Learner | No recalibration | Always isotonic | As chosen on training data | Folds that kept isotonic |',
+        '|---|---:|---:|---:|---:|',
+    ]
+    for k in learners:
+        kept = sum(
+            f['chosen'].get(k, {}).get('recalibration') == 'isotonic'
+            for f in res['folds']
+        )
+        lines.append(
+            f'| {LEARNER_LABELS[k]} | {pooled[f"{k}_raw"]["brier"]:.5f} | '
+            f'{pooled[f"{k}_isotonic"]["brier"]:.5f} | {pooled[k]["brier"]:.5f} | '
+            f'{kept}/{len(res["folds"])} |'
         )
     return lines
 
 
 def _breakdowns(r: dict[str, Any]) -> list[str]:
-    best = r['best_by_brier']
+    best = r.get('best_servable_by_brier', r['best_by_brier'])  # the served model
     lines: list[str] = []
     for key in ('platform', 'category', 'liquidity'):
         if key not in r['breakdown']:
@@ -215,6 +269,9 @@ LIMITS = [
     '- Polymarket history is only available at 3-hour grain for older markets, so Polymarket contracts scheduled to '
     'live less than a day are excluded, and its spread and volume history are not public.',
     '- Snapshots of one event (and of one contract) are correlated; intervals resample whole events.',
+    "- Kalshi contracts come from the venue's public event listings, which leave out events from before its move to "
+    '`KX` tickers, and most Kalshi series began in late 2025 or 2026; the Kalshi part of the sample is therefore '
+    'concentrated in 2026, while the Polymarket part spans the whole window.',
     '- Scheduled end dates are read as the venues report them after resolution; a date that was revised while the '
     'market traded would place that snapshot using the revised date.',
     '- A lower Brier score than the market price is a statement about calibration on resolved contracts, not about '
@@ -270,6 +327,7 @@ def render(res: dict[str, Any], ablation: dict[str, Any] | None = None) -> str:
         _data(res)
         + _design(res)
         + _scores(res['results'])
+        + _recalibration(res)
         + _breakdowns(res['results'])
         + _ablation(ablation)
     )
@@ -279,9 +337,10 @@ def render(res: dict[str, Any], ablation: dict[str, Any] | None = None) -> str:
             '',
             '## Served model',
             '',
-            f'`model_probability` (MCP tool) serves {LABELS[sb["model"]]}, refitted on all snapshots with the '
-            f'same inner tuning and isotonic step; parameters `{json.dumps(sb["params"])}`. File hashes are '
-            'recorded in its manifest and checked on load.',
+            f'`model_probability` (MCP tool) serves {LABELS[sb["model"]]}, the best learner whose library is '
+            'in the base `oracle3[ml]` install, refitted on all snapshots with the same inner tuning and '
+            f'recalibration check (recalibration: {sb.get("recalibration", "isotonic")}); parameters '
+            f'`{json.dumps(sb["params"])}`. File hashes are recorded in its manifest and checked on load.',
             '',
         ]
     return '\n'.join(lines + [''] + LIMITS)
