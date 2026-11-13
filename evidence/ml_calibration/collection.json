@@ -1,0 +1,92 @@
+{
+  "collected_at": "2026-11-12",
+  "command": [
+    "python -m oracle3.ml.collect kalshi --env-file <key file> --out <cache> --workers 8",
+    "python -m oracle3.ml.collect polymarket --out <cache> --workers 12 --max-pages 120"
+  ],
+  "window_scheduled_end": [
+    "2025-11-01T00:00:00Z",
+    "2026-11-05T00:00:00Z"
+  ],
+  "sampling": {
+    "events_per_series": 6,
+    "events_per_category_cap": 1500,
+    "markets_per_event": 4,
+    "snapshot_fractions_of_scheduled_life": [
+      0.25,
+      0.5,
+      0.75
+    ],
+    "event_time_anchor": "Kalshi strike_date, else the date in the event ticker; Polymarket endDate"
+  },
+  "kalshi": {
+    "series_listed": 16332,
+    "sampled_events_by_category": {
+      "crypto": 296,
+      "culture": 1500,
+      "economics": 1176,
+      "finance": 1252,
+      "politics": 1238,
+      "science_tech": 259,
+      "sports": 1500,
+      "weather": 613
+    },
+    "sampled_events": 7834,
+    "markets_with_bar_requests": 26867,
+    "requests": "{'ok': 31668, 'retry': 0, 'error': 0}",
+    "source": "Kalshi Trade API v2 (historical and live market, event and candlestick endpoints), read-only signed GETs"
+  },
+  "polymarket": {
+    "weeks": 53,
+    "events_listed": 292464,
+    "sampled_by_category": {
+      "crypto": {
+        "events": 490,
+        "markets": 1269
+      },
+      "culture": {
+        "events": 1265,
+        "markets": 4344
+      },
+      "economics": {
+        "events": 594,
+        "markets": 1908
+      },
+      "finance": {
+        "events": 1500,
+        "markets": 3511
+      },
+      "other": {
+        "events": 32,
+        "markets": 84
+      },
+      "politics": {
+        "events": 1500,
+        "markets": 4392
+      },
+      "science_tech": {
+        "events": 488,
+        "markets": 1596
+      },
+      "sports": {
+        "events": 1500,
+        "markets": 4593
+      },
+      "weather": {
+        "events": 877,
+        "markets": 3331
+      }
+    },
+    "sampled_markets": 25028,
+    "excluded_tags": {
+      "102127": "Up or Down",
+      "102892": "5M",
+      "102467": "15M",
+      "102175": "1H",
+      "102531": "4H"
+    },
+    "minimum_scheduled_life_hours": 24,
+    "price_history_grain_seconds": 10800,
+    "source": "Gamma API events/keyset; Data API v2 prices-history (interval=max, 3-hour buckets)"
+  }
+}

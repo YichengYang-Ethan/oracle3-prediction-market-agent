@@ -1,0 +1,110 @@
+{
+  "name": "oracle3-calibrated-probability",
+  "version": 1,
+  "model": "lightgbm",
+  "params": {
+    "num_leaves": 15,
+    "learning_rate": 0.05,
+    "min_child_samples": 100,
+    "n_estimators": 157
+  },
+  "features": [
+    "price",
+    "logit_price",
+    "extremity",
+    "log_hours_to_end",
+    "log_life_hours",
+    "elapsed_fraction",
+    "dp_life05",
+    "dp_life20",
+    "dp_1h",
+    "dp_24h",
+    "vol_logit_life20",
+    "hours_since_change",
+    "spread",
+    "log_volume_to_date",
+    "log_volume_life10",
+    "active_share_life10",
+    "is_kalshi",
+    "cat_sports",
+    "cat_politics",
+    "cat_economics",
+    "cat_finance",
+    "cat_crypto",
+    "cat_weather",
+    "cat_culture",
+    "cat_science_tech",
+    "cat_other"
+  ],
+  "trained_on": {
+    "snapshots": 111488,
+    "contracts": 41505,
+    "events": 14126,
+    "contracts_by_platform": {
+      "kalshi": 22163,
+      "polymarket": 19342
+    },
+    "prediction_times": [
+      "2022-07-25T20:00:00+00:00",
+      "2026-11-10T20:37:30+00:00"
+    ]
+  },
+  "out_of_sample": {
+    "model": {
+      "brier": 0.11228613508676911,
+      "log_loss": 0.3569554513536673,
+      "ece": 0.009965431216894896,
+      "ece_15": 0.010105474580599473,
+      "n": 96488,
+      "mean_prediction": 0.3004048518352993,
+      "outcome_rate": 0.30160227178509247
+    },
+    "market": {
+      "brier": 0.11764643164694055,
+      "log_loss": 0.3647216162913679,
+      "ece": 0.04157022116739908,
+      "ece_15": 0.042135306981179,
+      "n": 96488,
+      "mean_prediction": 0.34257017971146675,
+      "outcome_rate": 0.30160227178509247
+    },
+    "wang": {
+      "brier": 0.11487774505456287,
+      "log_loss": 0.35853902105221896,
+      "ece": 0.018730353887281365,
+      "ece_15": 0.021057395188389855,
+      "n": 96488,
+      "mean_prediction": 0.29889786264181367,
+      "outcome_rate": 0.30160227178509247
+    },
+    "vs_market": {
+      "brier_reduction_pct": 4.556276365659606,
+      "brier_reduction_pct_ci95": [
+        3.8252147001074004,
+        5.223429288957631
+      ],
+      "brier_difference": -0.0053602965601714375,
+      "brier_difference_ci95": [
+        -0.0061428458984261495,
+        -0.004495576363088379
+      ],
+      "ece_reduction_pct": 76.02747607051424,
+      "ece_reduction_pct_ci95": [
+        69.35300353338633,
+        82.2897140151931
+      ],
+      "folds_beating_market_on_brier": 5,
+      "folds": 5
+    }
+  },
+  "files": {
+    "model.txt": "789cabe8b87b2b9ca6e0584f8c196617f1e4e8eade4cab5f109d8d441b4f2be0",
+    "isotonic.json": "d121668c73bed391f7459ebe9898dd25631f564d45c02065ec162e3d3e36129c"
+  },
+  "libraries": {
+    "scikit-learn": "1.9.1",
+    "lightgbm": "4.7.0",
+    "numpy": "2.5.4"
+  },
+  "created_at": "2026-11-13T00:02:22.092330+00:00"
+}
