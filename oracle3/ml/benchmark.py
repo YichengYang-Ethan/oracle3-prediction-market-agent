@@ -50,6 +50,17 @@ from oracle3.ml.models import (
 )
 
 ISO_CLIP = 1e-4
+# Learners within this relative Brier margin of the best servable one count as tied; among tied
+# learners the bundle takes the first in SERVE_PREFERENCE (smallest file, fastest to score).
+SERVE_TIE = 0.001
+SERVE_PREFERENCE = (
+    'lightgbm',
+    'lightgbm_monotone',
+    'logistic',
+    'spline_logistic',
+    'mlp',
+    'random_forest',
+)
 BASELINES = ('market', 'market_isotonic', 'wang', 'wang_hier')
 ENSEMBLES = ('ensemble_mean', 'stacked')
 
@@ -380,6 +391,12 @@ def summarize(df: pd.DataFrame, preds: pd.DataFrame, n_boot: int) -> dict[str, A
     best = min(learners, key=lambda m: pooled[m]['brier'])
     best_ece = min(learners, key=lambda m: pooled[m]['ece'])
     best_servable = min(SERVABLE, key=lambda m: pooled[m]['brier'])
+    tied = [
+        m
+        for m in SERVABLE
+        if pooled[m]['brier'] <= pooled[best_servable]['brier'] * (1 + SERVE_TIE)
+    ]
+    served = next(m for m in SERVE_PREFERENCE if m in tied)
     candidates = [*learners, *ENSEMBLES]
     best_overall = min(candidates, key=lambda m: pooled[m]['brier'])
     sub = df.iloc[rows].reset_index(drop=True)
@@ -391,7 +408,7 @@ def summarize(df: pd.DataFrame, preds: pd.DataFrame, n_boot: int) -> dict[str, A
             idx = part.index.to_numpy()
             breakdown[key][str(val)] = {
                 m: score(preds[m].to_numpy(float)[idx], y[idx])
-                for m in dict.fromkeys(('market', 'wang', best, best_servable))
+                for m in dict.fromkeys(('market', 'wang', best, served))
             }
     return {
         'pooled': pooled,
@@ -400,13 +417,16 @@ def summarize(df: pd.DataFrame, preds: pd.DataFrame, n_boot: int) -> dict[str, A
         'best_by_brier': best,
         'best_by_ece': best_ece,
         'best_servable_by_brier': best_servable,
+        'served': served,
+        'served_rule': f'best servable learner, or the first of {list(SERVE_PREFERENCE)} '
+        f'within {100 * SERVE_TIE:.1f}% of its Brier score',
         'best_overall_by_brier': best_overall,
         'any_learner_beats_market_on_brier': any(
             pooled[m]['brier'] < pooled['market']['brier'] for m in learners
         ),
         'reliability': {
             m: reliability(preds[m].to_numpy(float), y)
-            for m in dict.fromkeys(('market', 'wang', best, best_servable))
+            for m in dict.fromkeys(('market', 'wang', best, served))
         },
         'breakdown': breakdown,
     }
@@ -514,7 +534,7 @@ def main(argv: list[str] | None = None) -> None:
 
         bundle_info = train_bundle(
             df,
-            summary['best_servable_by_brier']
+            summary['served']
             if summary['any_learner_beats_market_on_brier']
             else min(SERVABLE, key=lambda m: summary['pooled'][m]['ece']),
             a.bundle,

@@ -140,7 +140,7 @@ def _scores(r: dict[str, Any]) -> list[str]:
         '',
     ]
     best, best_ece = r['best_by_brier'], r['best_by_ece']
-    served = r.get('best_servable_by_brier', best)
+    served = r.get('served', r.get('best_servable_by_brier', best))
     overall = r.get('best_overall_by_brier', best)
     if r['any_learner_beats_market_on_brier']:
         for title, m in dict.fromkeys(
@@ -218,7 +218,9 @@ def _recalibration(res: dict[str, Any]) -> list[str]:
 
 
 def _breakdowns(r: dict[str, Any]) -> list[str]:
-    best = r.get('best_servable_by_brier', r['best_by_brier'])  # the served model
+    best = r.get(
+        'served', r.get('best_servable_by_brier', r['best_by_brier'])
+    )  # served model
     lines: list[str] = []
     for key in ('platform', 'category', 'liquidity'):
         if key not in r['breakdown']:
@@ -269,9 +271,8 @@ LIMITS = [
     '- Polymarket history is only available at 3-hour grain for older markets, so Polymarket contracts scheduled to '
     'live less than a day are excluded, and its spread and volume history are not public.',
     '- Snapshots of one event (and of one contract) are correlated; intervals resample whole events.',
-    "- Kalshi contracts come from the venue's public event listings, which leave out events from before its move to "
-    '`KX` tickers, and most Kalshi series began in late 2025 or 2026; the Kalshi part of the sample is therefore '
-    'concentrated in 2026, while the Polymarket part spans the whole window.',
+    '- Most sampled events on both venues resolve in 2026, when far more were listed, so the pooled scores weigh '
+    "2026 most; Kalshi's public event listings also leave out events from before its move to `KX` tickers.",
     '- Scheduled end dates are read as the venues report them after resolution; a date that was revised while the '
     'market traded would place that snapshot using the revised date.',
     '- A lower Brier score than the market price is a statement about calibration on resolved contracts, not about '
@@ -308,11 +309,25 @@ def _ablation(ab: dict[str, Any] | None) -> list[str]:
     lines += [
         '',
         'Recalibrating the price alone recovers part of the gain; venue, category, timing, price-path and '
-        'liquidity features add the rest. The isotonic step, fitted on inner out-of-fold predictions of models '
-        'trained on less data, lowered the scores slightly in every row.',
+        'liquidity features add the rest.' + _iso_note(ab),
         '',
     ]
     return lines
+
+
+def _iso_note(ab: dict[str, Any]) -> str:
+    rows = [
+        k[: -len('/raw')]
+        for k in ab
+        if k.endswith('/raw') and f'{k[: -len("/raw")]}/isotonic' in ab
+    ]
+    if not rows:
+        return ''
+    worse = sum(ab[f'{k}/isotonic']['brier'] > ab[f'{k}/raw']['brier'] for k in rows)
+    return (
+        ' Always applying the isotonic map (fitted on inner out-of-fold predictions of models trained '
+        f'on less data) raised the Brier score in {worse} of {len(rows)} rows.'
+    )
 
 
 def render(res: dict[str, Any], ablation: dict[str, Any] | None = None) -> str:
@@ -337,8 +352,9 @@ def render(res: dict[str, Any], ablation: dict[str, Any] | None = None) -> str:
             '',
             '## Served model',
             '',
-            f'`model_probability` (MCP tool) serves {LABELS[sb["model"]]}, the best learner whose library is '
-            'in the base `oracle3[ml]` install, refitted on all snapshots with the same inner tuning and '
+            f'`model_probability` (MCP tool) serves {LABELS[sb["model"]]}: among learners whose library is '
+            'in the base `oracle3[ml]` install, those within 0.1% of the best Brier score count as tied and '
+            'the smallest of them is served. It is refitted on all snapshots with the same inner tuning and '
             f'recalibration check (recalibration: {sb.get("recalibration", "isotonic")}); parameters '
             f'`{json.dumps(sb["params"])}`. File hashes are recorded in its manifest and checked on load.',
             '',

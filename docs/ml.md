@@ -19,8 +19,8 @@ raises the rate limit.
   up to 100 per series spread evenly over time and at most 20,000 per category; up to four markets
   per event, chosen by a seeded hash of the ticker. Events from before Kalshi moved to `KX` tickers
   are not in the public listing (they stay in an archive that can be read by exact ticker but not
-  listed), and most current series only began in late 2025 or 2026, so the Kalshi sample is
-  concentrated in 2026 while the Polymarket sample spans the whole window. Bars are the venue's
+  listed), and most current series only began in late 2025 or 2026. On both venues most sampled
+  events resolve in 2026, when far more were listed. Bars are the venue's
   candlesticks (best bid and ask, last trade, volume): one-minute bars for contracts scheduled to
   live up to two days, hourly up to 120 days, daily beyond.
 - **Polymarket:** closed events from the Gamma API, sampled the same way; binary markets with a
