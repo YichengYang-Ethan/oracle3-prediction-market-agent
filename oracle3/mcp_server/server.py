@@ -566,11 +566,11 @@ async def model_probability(venue: VenueArg, market_id: MarketIdArg) -> dict[str
     It is an estimate, not a trading signal; read the rules with get_market.
     Requires the ML extra: pip install 'oracle3[ml]'.
     """
-    venue = venues.check_venue(venue)
+    checked = venues.check_venue(venue)
     try:
         from oracle3.ml.serve import score_market
 
-        return await score_market(venue, market_id)
+        return await score_market(checked, market_id)
     except ImportError as exc:
         raise ToolError(
             "model_probability needs the ML extra: pip install 'oracle3[ml]' "

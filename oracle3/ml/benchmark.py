@@ -255,7 +255,7 @@ def summarize(df: pd.DataFrame, preds: pd.DataFrame, n_boot: int) -> dict[str, A
     best_ece = min(learners, key=lambda m: pooled[m]['ece'])
     sub = df.iloc[rows].reset_index(drop=True)
     sub['liquidity'] = liquidity_bucket(sub)
-    breakdown = {}
+    breakdown: dict[str, dict[str, Any]] = {}
     for key in ('platform', 'category', 'liquidity'):
         breakdown[key] = {}
         for val, part in sub.groupby(key):

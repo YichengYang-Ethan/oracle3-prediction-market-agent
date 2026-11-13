@@ -20,7 +20,6 @@ import gzip
 import hashlib
 import json
 import re
-import sys
 import time
 from collections import defaultdict
 from collections.abc import Callable, Iterable
@@ -87,6 +86,13 @@ _MONTHS = (
     'DEC',
 )
 _TICKER_DATE = re.compile(r'(\d{2})(' + '|'.join(_MONTHS) + r')(\d{2})?')
+
+
+def required_ts(value: Any) -> float:
+    ts = iso_ts(value)
+    if ts is None:
+        raise ValueError(f'not an ISO-8601 time: {value!r}')
+    return ts
 
 
 def ticker_date(event_ticker: str) -> float | None:
@@ -223,7 +229,7 @@ def _kalshi_bar(c: dict[str, Any]) -> list[Any]:
         block = c.get(name) or {}
         for key in ('close_dollars', 'close'):
             v = block.get(key)
-            if v not in (None, ''):
+            if v is not None and v != '':
                 return float(v)
         return None
 
@@ -231,7 +237,7 @@ def _kalshi_bar(c: dict[str, Any]) -> list[Any]:
         block = c.get('price') or {}
         for key in ('previous_dollars', 'previous'):
             v = block.get(key)
-            if v not in (None, ''):
+            if v is not None and v != '':
                 return float(v)
         return None
 
@@ -262,7 +268,7 @@ class KalshiCollector:
     ):
         self.cache = Cache(out / 'kalshi')
         self.reader = KalshiReader(kalshi_signer_from_env(env_file), rate)
-        self.start, self.end = iso_ts(start), iso_ts(end)
+        self.start, self.end = required_ts(start), required_ts(end)
         self.per_series, self.per_category, self.per_event = (
             per_series,
             per_category,
@@ -353,11 +359,11 @@ class KalshiCollector:
             listing = self.cache.load('events', f'{s["ticker"]}.json') or {}
             events = listing.get('events') or []
             in_window = [
-                e
-                for e in events
-                if (event_time(e) or 0.0) and self.start <= event_time(e) < self.end
+                e for e in events if self.start <= (event_time(e) or 0.0) < self.end
             ]
-            picked = spread_pick(in_window, self.per_series, key=event_time)
+            picked = spread_pick(
+                in_window, self.per_series, key=lambda e: event_time(e) or 0.0
+            )
             cat = kalshi_category(s.get('category'), s.get('ticker'))
             for e in picked:
                 e = dict(
@@ -442,14 +448,14 @@ class KalshiCollector:
             if open_ts and sched_end and close_ts
             else []
         )
-        record = {
+        record: dict[str, Any] = {
             'market': market,
             'event': event,
             'period': None,
             'bars': [],
             'snapshot_times': times,
         }
-        if times:
+        if times and open_ts and sched_end:
             period = bar_period(open_ts, sched_end)
             record['period'] = period
             start = int(open_ts) - 60 * period
@@ -545,7 +551,7 @@ class PolymarketCollector:
         self.cache = Cache(out / 'polymarket')
         self.gamma = GammaReader()
         self.data = PolyDataReader()
-        self.start, self.end = iso_ts(start), iso_ts(end)
+        self.start, self.end = required_ts(start), required_ts(end)
         self.per_series, self.per_category, self.per_event = (
             per_series,
             per_category,
@@ -851,4 +857,4 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    main()

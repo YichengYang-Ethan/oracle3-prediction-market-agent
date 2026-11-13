@@ -14,9 +14,18 @@ pytest.importorskip('sklearn')
 import httpx  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from oracle3.ml.cv import inner_split, inner_walk_forward, purged_walk_forward  # noqa: E402
+from oracle3.ml.cv import (  # noqa: E402
+    inner_split,
+    inner_walk_forward,
+    purged_walk_forward,
+)
 from oracle3.ml.dataset import polymarket_rows  # noqa: E402
-from oracle3.ml.features import FEATURES, Bars, displayed_prices, snapshot_features  # noqa: E402
+from oracle3.ml.features import (  # noqa: E402
+    FEATURES,
+    Bars,
+    displayed_prices,
+    snapshot_features,
+)
 from oracle3.ml.metrics import brier, ece, log_loss  # noqa: E402
 from oracle3.ml.models import WangBaseline  # noqa: E402
 

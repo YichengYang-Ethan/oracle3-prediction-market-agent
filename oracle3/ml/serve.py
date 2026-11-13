@@ -298,7 +298,7 @@ async def polymarket_live(
     if len(tokens) != 2:
         raise ValueError(f'Polymarket market {market_id} is not a two-outcome market')
     tags: list[str] = [
-        t.get('label')
+        str(t['label'])
         for t in m.get('tags') or []
         if isinstance(t, dict) and t.get('label')
     ]

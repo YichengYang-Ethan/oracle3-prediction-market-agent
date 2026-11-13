@@ -69,18 +69,22 @@ def read_env_file(path: str | os.PathLike[str]) -> dict[str, str]:
 class _KalshiSigner:
     def __init__(self, key_id: str, pem_path: Path):
         from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
 
         self.key_id = key_id
-        self._key = serialization.load_pem_private_key(
-            pem_path.read_bytes(), password=None
-        )
+        key = serialization.load_pem_private_key(pem_path.read_bytes(), password=None)
+        if not isinstance(key, rsa.RSAPrivateKey):
+            raise ValueError(
+                f'{pem_path} is not an RSA private key; Kalshi keys are RSA'
+            )
+        self._key = key
 
     def headers(self, path: str) -> dict[str, str]:
         from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.primitives.asymmetric import padding
 
         ts = str(int(time.time() * 1000))
-        sig = self._key.sign(  # type: ignore[union-attr,call-arg]
+        sig = self._key.sign(
             (ts + 'GET' + path).encode(),
             padding.PSS(
                 mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.DIGEST_LENGTH

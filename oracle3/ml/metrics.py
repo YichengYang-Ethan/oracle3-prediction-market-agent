@@ -76,7 +76,7 @@ def cluster_bootstrap(
     rng = np.random.default_rng(seed)
     groups = np.asarray(groups)
     uniq, inverse = np.unique(groups, return_inverse=True)
-    members = [[] for _ in range(len(uniq))]
+    members: list[list[int]] = [[] for _ in range(len(uniq))]
     for row, g in enumerate(inverse):
         members[g].append(row)
     members_arr = [np.asarray(m) for m in members]
