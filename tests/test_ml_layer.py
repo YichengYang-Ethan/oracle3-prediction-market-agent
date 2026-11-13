@@ -377,6 +377,80 @@ def test_kalshi_rows_use_only_bars_before_each_snapshot():
     assert rows[1]['log_volume_to_date'] == pytest.approx(math.log1p(5.0 * 50))
 
 
+def test_cache_writes_gzip_and_still_reads_plain_files(tmp_path):
+    from oracle3.ml.collect import Cache
+
+    cache = Cache(tmp_path)
+    (tmp_path / 'old').mkdir()
+    (tmp_path / 'old' / 'a.json').write_text('[1, 2]')
+    assert cache.load('old', 'a.json') == [1, 2]
+    cache.save({'x': 1}, 'old', 'a.json')  # the gzipped copy replaces the plain one
+    assert not (tmp_path / 'old' / 'a.json').exists()
+    assert cache.load('old', 'a.json') == {'x': 1}
+    (tmp_path / 'old' / 'b.json').write_text('{}')
+    assert [p.name for p in cache.files('old')] == ['a.json.gz', 'b.json']
+    assert cache.load('old', 'missing.json') is None
+
+
+class _FakeKalshi:
+    def __init__(self, pages: list[list[dict]]):
+        self.pages, self.calls = pages, 0
+
+    def paginate(self, path, key, max_pages=10_000, **params):
+        for page in self.pages[:max_pages]:
+            self.calls += 1
+            yield page
+
+
+def test_kalshi_listing_is_reused_only_when_it_covers_the_window(tmp_path):
+    from oracle3.ml.collect import Cache, KalshiCollector, iso_ts
+
+    pages = [  # newest first, dated by ticker
+        [{'event_ticker': 'KXS-26JAN28'}, {'event_ticker': 'KXS-26JAN20'}],
+        [{'event_ticker': 'KXS-26JAN12'}, {'event_ticker': 'KXS-26JAN04'}],
+    ]
+    col = object.__new__(KalshiCollector)
+    col.cache, col.max_pages, col.reader = Cache(tmp_path), 10, _FakeKalshi(pages)
+
+    col.start = iso_ts('2026-01-15T00:00:00Z')
+    assert (
+        len(col.events_of({'ticker': 'KXS'})) == 4
+    )  # stops on the page that passes the start
+    col.events_of({'ticker': 'KXS'})
+    assert col.reader.calls == 2  # second call served from the cache
+
+    col.start = iso_ts('2026-01-10T00:00:00Z')
+    col.events_of({'ticker': 'KXS'})
+    assert col.reader.calls == 2  # the cached listing already reaches back past Jan 10
+
+    col.start = iso_ts('2026-01-01T00:00:00Z')
+    col.events_of({'ticker': 'KXS'})
+    assert col.reader.calls == 4  # an earlier start lists the series again, to its end
+    col.start = iso_ts('2020-01-01T00:00:00Z')
+    col.events_of({'ticker': 'KXS'})
+    assert col.reader.calls == 4  # a complete listing serves any start
+
+    col.max_pages, col.reader = 1, _FakeKalshi(pages)
+    col.events_of({'ticker': 'KXT'})
+    col.events_of({'ticker': 'KXT'})
+    assert col.reader.calls == 2  # a listing cut by the page limit is never trusted
+
+
+def test_polymarket_listing_weeks_sit_on_a_fixed_grid():
+    from oracle3.ml.collect import PolymarketCollector, iso_ts
+
+    def weeks(start: str) -> list[tuple[str, str]]:
+        col = object.__new__(PolymarketCollector)
+        col.start, col.end = iso_ts(start), iso_ts('2025-12-01T00:00:00Z')
+        return col.week_windows()
+
+    late, early = weeks('2025-11-01T00:00:00Z'), weeks('2025-10-15T00:00:00Z')
+    assert late[0] == ('2025-11-01T00:00:00Z', '2025-11-08T00:00:00Z')
+    assert early[0] == ('2025-10-15T00:00:00Z', '2025-10-18T00:00:00Z')
+    assert late[-1] == ('2025-11-29T00:00:00Z', '2025-12-01T00:00:00Z')
+    assert set(late) <= set(early)  # an earlier start reuses every cached later week
+
+
 async def test_model_probability_tool_scores_a_live_polymarket_market(tiny_bundle):
     pytest.importorskip('mcp')
     from oracle3.mcp_server import venues

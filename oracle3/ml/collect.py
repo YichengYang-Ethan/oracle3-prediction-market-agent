@@ -16,6 +16,7 @@ not used to choose contracts.
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
 import re
@@ -50,6 +51,10 @@ POLY_MIN_LIFE_S = (
 # Auto-generated short-horizon series ("Up or Down", 5M, 15M, 1H, 4H) are thousands of events a week whose
 # trading window is far shorter than the 3-hour price grain; leaving them out keeps the weekly listing complete.
 POLY_EXCLUDED_TAGS = (102127, 102892, 102467, 102175, 102531)
+WEEK_S = 7 * 86400
+WEEK_GRID_ORIGIN = (
+    2 * 86400
+)  # 1970-01-03, a Saturday: listing weeks run Saturday to Saturday (UTC)
 
 
 def iso_ts(value: Any) -> float | None:
@@ -146,24 +151,50 @@ def bar_period(open_ts: float, sched_end: float) -> int:
     return 1440
 
 
+def read_json(path: Path) -> Any:
+    if path.name.endswith('.gz'):
+        with gzip.open(path, 'rt', encoding='utf-8') as fh:
+            return json.load(fh)
+    return json.loads(path.read_text())
+
+
 class Cache:
+    """Gzipped JSON files under one root; plain ``.json`` files written by older runs are still read."""
+
     def __init__(self, root: Path):
         self.root = root
 
-    def path(self, *parts: str) -> Path:
+    def _gz(self, parts: tuple[str, ...]) -> Path:
         p = self.root.joinpath(*parts)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        return p
+        return p.with_name(p.name + '.gz')
 
     def load(self, *parts: str) -> Any:
-        p = self.root.joinpath(*parts)
-        return json.loads(p.read_text()) if p.exists() else None
+        for p in (self._gz(parts), self.root.joinpath(*parts)):
+            if p.exists():
+                return read_json(p)
+        return None
 
     def save(self, obj: Any, *parts: str) -> None:
-        p = self.path(*parts)
-        tmp = p.with_suffix(p.suffix + '.tmp')
-        tmp.write_text(json.dumps(obj, separators=(',', ':')))
-        tmp.replace(p)
+        gz = self._gz(parts)
+        gz.parent.mkdir(parents=True, exist_ok=True)
+        tmp = gz.with_name(gz.name + '.tmp')
+        with gzip.open(tmp, 'wt', encoding='utf-8') as fh:
+            json.dump(obj, fh, separators=(',', ':'))
+        tmp.replace(gz)
+        self.root.joinpath(*parts).unlink(missing_ok=True)  # superseded plain copy
+
+    def files(self, *parts: str) -> list[Path]:
+        folder = self.root.joinpath(*parts)
+        return sorted([*folder.glob('*.json'), *folder.glob('*.json.gz')])
+
+
+def window_tag(start: float, end: float, *caps: tuple[str, int]) -> str:
+    """Name for a sample drawn with these settings, so samples drawn with other settings sit beside it."""
+
+    def day(t: float) -> str:
+        return datetime.fromtimestamp(t, timezone.utc).strftime('%Y%m%d')
+
+    return '_'.join([f'{day(start)}-{day(end)}', *(f'{k}{v}' for k, v in caps)])
 
 
 def run_pool(
@@ -250,11 +281,28 @@ class KalshiCollector:
             self.cache.save(cached, 'series.json')
         return cached
 
+    def tag(self) -> str:
+        return window_tag(
+            self.start,
+            self.end,
+            ('s', self.per_series),
+            ('c', self.per_category),
+            ('e', self.per_event),
+        )
+
     def events_of(self, series: dict) -> list[dict]:
+        """Settled events of one series, listed newest first until the listing passes the window start.
+
+        The cache notes whether the listing ran out (``complete``) and the oldest event it reached, so a
+        later run with an earlier start lists the series again only when it has to.
+        """
         name = series['ticker']
         cached = self.cache.load('events', f'{name}.json')
-        if cached is not None:
-            return cached
+        if isinstance(cached, dict) and (
+            cached['complete']
+            or (cached['oldest'] is not None and cached['oldest'] < self.start)
+        ):
+            return cached['events']
         keep = (
             'event_ticker',
             'series_ticker',
@@ -265,6 +313,8 @@ class KalshiCollector:
             'category',
         )
         events: list[dict] = []
+        oldest: float | None = None
+        pages, passed_start = 0, False
         try:
             for page in self.reader.paginate(
                 '/events',
@@ -274,22 +324,34 @@ class KalshiCollector:
                 status='settled',
                 limit=200,
             ):
+                pages += 1
                 events += [{k: e.get(k) for k in keep} for e in page]
                 dates = [d for d in (event_time(e) for e in page) if d]
-                if dates and min(dates) < self.start:
+                if dates:
+                    oldest = min([*dates, *([oldest] if oldest is not None else [])])
+                if oldest is not None and oldest < self.start:
+                    passed_start = True
                     break
         except SourceError as exc:
             print(f'[kalshi] events {name}: {exc}', flush=True)
-        self.cache.save(events, 'events', f'{name}.json')
+            return events  # not cached, so a later run retries this series
+        complete = not passed_start and pages < self.max_pages
+        self.cache.save(
+            {'complete': complete, 'oldest': oldest, 'events': events},
+            'events',
+            f'{name}.json',
+        )
         return events
 
     def sample_events(self, series_list: list[dict]) -> list[dict]:
-        cached = self.cache.load('sample_events.json')
+        name = f'sample_events_{self.tag()}.json'
+        cached = self.cache.load(name)
         if cached is not None:
             return cached
         by_cat: dict[str, list[dict]] = defaultdict(list)
         for s in series_list:
-            events = self.cache.load('events', f'{s["ticker"]}.json') or []
+            listing = self.cache.load('events', f'{s["ticker"]}.json') or {}
+            events = listing.get('events') or []
             in_window = [
                 e
                 for e in events
@@ -313,7 +375,7 @@ class KalshiCollector:
                 ]
             sample += events
             print(f'[kalshi] category {cat}: {len(events)} events', flush=True)
-        self.cache.save(sample, 'sample_events.json')
+        self.cache.save(sample, name)
         return sample
 
     def markets_of(self, event: dict) -> list[dict]:
@@ -446,6 +508,11 @@ class KalshiCollector:
             jobs += [(m, e) for m in markets]
         print(f'[kalshi] {len(jobs)} markets to fetch bars for', flush=True)
         run_pool(self.candles_of, jobs, self.workers, 'kalshi bars')
+        # The dataset is built from this selection only, never from whatever else sits in the cache.
+        self.cache.save(
+            {'sample': self.tag(), 'files': [m['ticker'] for m, _ in jobs]},
+            'selection.json',
+        )
         print(f'[kalshi] done; requests {self.reader.stats}', flush=True)
 
 
@@ -486,24 +553,34 @@ class PolymarketCollector:
         )
         self.workers, self.max_pages = workers, max_pages
 
+    def tag(self) -> str:
+        return window_tag(
+            self.start,
+            self.end,
+            ('s', self.per_series),
+            ('c', self.per_category),
+            ('e', self.per_event),
+        )
+
     def week_windows(self) -> list[tuple[str, str]]:
+        """Weekly listing windows on a fixed UTC grid, so runs with other start dates reuse cached weeks."""
+        fmt = '%Y-%m-%dT%H:%M:%SZ'
+        t = self.start - (self.start - WEEK_GRID_ORIGIN) % WEEK_S
         out = []
-        t = self.start
         while t < self.end:
-            u = min(self.end, t + 7 * 86400)
-            fmt = '%Y-%m-%dT%H:%M:%SZ'
+            lo, hi = max(t, self.start), min(t + WEEK_S, self.end)
             out.append(
                 (
-                    datetime.fromtimestamp(t, timezone.utc).strftime(fmt),
-                    datetime.fromtimestamp(u, timezone.utc).strftime(fmt),
+                    datetime.fromtimestamp(lo, timezone.utc).strftime(fmt),
+                    datetime.fromtimestamp(hi, timezone.utc).strftime(fmt),
                 )
             )
-            t = u
+            t += WEEK_S
         return out
 
     def events_in(self, window: tuple[str, str]) -> int:
         lo, hi = window
-        name = f'{lo[:10]}.json'
+        name = f'{lo.replace(":", "")}_{hi.replace(":", "")}.json'
         if self.cache.load('events', name) is not None:
             return 0
         keep_e = (
@@ -593,22 +670,22 @@ class PolymarketCollector:
     def events_by_series(self) -> dict[str, list[dict]]:
         """Events in the window with at least one usable market, keyed by series (or by event when standalone)."""
         events: dict[str, dict] = {}
-        for p in sorted((self.cache.root / 'events').glob('*.json')):
-            for e in json.loads(p.read_text()):
-                events[str(e['id'])] = e
+        for p in self.cache.files('events'):
+            for e in read_json(p):
+                end = iso_ts(e.get('endDate'))
+                if end is None or not self.start <= end < self.end:
+                    continue
+                usable = self.resolved_markets(e)
+                if usable:  # keep only what sampling needs; full weekly listings run to gigabytes
+                    events[str(e['id'])] = dict(e, markets=usable)
         by_series: dict[str, list[dict]] = defaultdict(list)
         for e in events.values():
-            end = iso_ts(e.get('endDate'))
-            if (
-                end is not None
-                and self.start <= end < self.end
-                and self.resolved_markets(e)
-            ):
-                by_series[e.get('series') or f'event:{e["id"]}'].append(e)
+            by_series[e.get('series') or f'event:{e["id"]}'].append(e)
         return by_series
 
     def sample_markets(self) -> list[dict]:
-        cached = self.cache.load('sample_markets.json')
+        name = f'sample_markets_{self.tag()}.json'
+        cached = self.cache.load(name)
         if cached is not None:
             return cached
         by_series = self.events_by_series()
@@ -643,7 +720,7 @@ class PolymarketCollector:
                 f'[poly] category {cat}: {len(evs)} events, {n_markets} markets',
                 flush=True,
             )
-        self.cache.save(sample, 'sample_markets.json')
+        self.cache.save(sample, name)
         return sample
 
     def history_of(self, item: dict) -> int:
@@ -707,6 +784,14 @@ class PolymarketCollector:
         sample = self.sample_markets()
         print(f'[poly] {len(sample)} sampled markets', flush=True)
         run_pool(self.history_of, sample, self.workers, 'poly history')
+        # The dataset is built from this selection only, never from whatever else sits in the cache.
+        self.cache.save(
+            {
+                'sample': self.tag(),
+                'files': [item['market']['yes_token'][-24:] for item in sample],
+            },
+            'selection.json',
+        )
         print(
             f'[poly] done; gamma {self.gamma.stats} data {self.data.stats}', flush=True
         )
@@ -723,21 +808,21 @@ def main(argv: list[str] | None = None) -> None:
         help='Kalshi key file (KALSHI_API_KEY_ID, KALSHI_PRIVATE_KEY_PATH); optional',
     )
     ap.add_argument(
-        '--start', default='2025-11-01T00:00:00Z', help='earliest scheduled end (UTC)'
+        '--start', default='2024-01-01T00:00:00Z', help='earliest scheduled end (UTC)'
     )
     ap.add_argument(
         '--end',
         default='2026-11-05T00:00:00Z',
         help='latest scheduled end, exclusive (UTC)',
     )
-    ap.add_argument('--per-series', type=int, default=6)
-    ap.add_argument('--per-category', type=int, default=1500)
+    ap.add_argument('--per-series', type=int, default=40)
+    ap.add_argument('--per-category', type=int, default=8000)
     ap.add_argument('--per-event', type=int, default=4)
     ap.add_argument('--workers', type=int, default=8)
     ap.add_argument(
         '--rate', type=float, default=None, help='Kalshi requests per second'
     )
-    ap.add_argument('--max-pages', type=int, default=40)
+    ap.add_argument('--max-pages', type=int, default=120)
     a = ap.parse_args(argv)
     if a.venue == 'kalshi':
         KalshiCollector(

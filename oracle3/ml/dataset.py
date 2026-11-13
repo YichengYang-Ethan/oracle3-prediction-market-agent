@@ -14,14 +14,14 @@ event-grouped, purged cross-validation:
 from __future__ import annotations
 
 import argparse
-import json
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
-from oracle3.ml.collect import iso_ts
+from oracle3.ml.collect import Cache, iso_ts, read_json
 from oracle3.ml.features import Bars, snapshot_features
 
 
@@ -111,12 +111,34 @@ def polymarket_rows(record: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+def records(cache: Path, venue: str, folder: str) -> Iterator[dict[str, Any]]:
+    """The venue's selected contracts (its ``selection.json``), or every cached one when there is none."""
+    store = Cache(cache / venue)
+    selection = store.load('selection.json')
+    if selection is None:
+        for path in store.files(folder):
+            yield read_json(path)
+        return
+    missing = 0
+    for key in selection['files']:
+        rec = store.load(folder, f'{key}.json')
+        if rec is None:
+            missing += 1
+        else:
+            yield rec
+    print(
+        f'[dataset] {venue}: sample {selection["sample"]}, '
+        f'{len(selection["files"]) - missing:,} contracts, {missing:,} not collected',
+        flush=True,
+    )
+
+
 def build(cache: Path) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
-    for path in sorted((cache / 'kalshi' / 'candles').glob('*.json')):
-        rows += kalshi_rows(json.loads(path.read_text()))
-    for path in sorted((cache / 'polymarket' / 'history').glob('*.json')):
-        rows += polymarket_rows(json.loads(path.read_text()))
+    for rec in records(cache, 'kalshi', 'candles'):
+        rows += kalshi_rows(rec)
+    for rec in records(cache, 'polymarket', 'history'):
+        rows += polymarket_rows(rec)
     df = pd.DataFrame(rows)
     if df.empty:
         return df
