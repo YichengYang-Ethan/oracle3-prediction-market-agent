@@ -1,7 +1,7 @@
 {
   "market": {
-    "brier": 0.11764643164694055,
-    "ece": 0.04157022116739908
+    "brier": 0.11850999171691086,
+    "ece": 0.04131951855608845
   },
   "price_only/raw": {
     "features": [
@@ -9,14 +9,14 @@
       "logit_price",
       "extremity"
     ],
-    "brier": 0.11375053133656725,
-    "ece": 0.007722974510032862,
-    "brier_reduction_pct": 3.311532917602622,
+    "brier": 0.11418790518726805,
+    "ece": 0.003741153127253303,
+    "brier_reduction_pct": 3.647022894041818,
     "brier_reduction_pct_ci95": [
-      2.641467424143976,
-      3.8403068400226754
+      3.4633637298456614,
+      3.8509231207746173
     ],
-    "ece_reduction_pct": 81.4218585007445
+    "ece_reduction_pct": 90.94579690667271
   },
   "price_only/isotonic": {
     "features": [
@@ -24,14 +24,14 @@
       "logit_price",
       "extremity"
     ],
-    "brier": 0.11560379194743953,
-    "ece": 0.01477618701080797,
-    "brier_reduction_pct": 1.7362530005423649,
+    "brier": 0.11441351734183869,
+    "ece": 0.004988366344430528,
+    "brier_reduction_pct": 3.456648942190099,
     "brier_reduction_pct_ci95": [
-      0.9272648467281831,
-      2.4525192297882876
+      3.2870619362696742,
+      3.655421266506472
     ],
-    "ece_reduction_pct": 64.45487515857624
+    "ece_reduction_pct": 87.92733671942679
   },
   "price_venue_category/raw": {
     "features": [
@@ -49,14 +49,14 @@
       "cat_science_tech",
       "cat_other"
     ],
-    "brier": 0.11292074989760663,
-    "ece": 0.007351513322584667,
-    "brier_reduction_pct": 4.016850900770031,
+    "brier": 0.11378664674466739,
+    "ece": 0.007939146562520635,
+    "brier_reduction_pct": 3.9856090645304376,
     "brier_reduction_pct_ci95": [
-      3.3819402844419284,
-      4.577875811348305
+      3.805300946634935,
+      4.192994320626501
     ],
-    "ece_reduction_pct": 82.31543370197414
+    "ece_reduction_pct": 80.78596547115188
   },
   "price_venue_category/isotonic": {
     "features": [
@@ -74,14 +74,14 @@
       "cat_science_tech",
       "cat_other"
     ],
-    "brier": 0.11477776416968101,
-    "ece": 0.013452572183648393,
-    "brier_reduction_pct": 2.4383803546787375,
+    "brier": 0.11394111501141505,
+    "ece": 0.005191288075935277,
+    "brier_reduction_pct": 3.855267087023051,
     "brier_reduction_pct_ci95": [
-      1.5838873025850706,
-      3.155589983607106
+      3.6622577630578514,
+      4.068867887423449
     ],
-    "ece_reduction_pct": 67.63892082874362
+    "ece_reduction_pct": 87.43623290554933
   },
   "all_features/raw": {
     "features": [
@@ -112,14 +112,14 @@
       "cat_science_tech",
       "cat_other"
     ],
-    "brier": 0.11176151689177838,
-    "ece": 0.005129249984180503,
-    "brier_reduction_pct": 5.002204208643512,
+    "brier": 0.11201520981094219,
+    "ece": 0.008044614532528579,
+    "brier_reduction_pct": 5.480366517519464,
     "brier_reduction_pct_ci95": [
-      4.318251643075564,
-      5.6580727475381405
+      5.300177391936055,
+      5.689622281271522
     ],
-    "ece_reduction_pct": 87.6612396082149
+    "ece_reduction_pct": 80.53071571584611
   },
   "all_features/isotonic": {
     "features": [
@@ -150,13 +150,13 @@
       "cat_science_tech",
       "cat_other"
     ],
-    "brier": 0.11228613508676911,
-    "ece": 0.009965431216894896,
-    "brier_reduction_pct": 4.556276365659606,
+    "brier": 0.11202832693676236,
+    "ece": 0.006516664653917944,
+    "brier_reduction_pct": 5.469298146295953,
     "brier_reduction_pct_ci95": [
-      3.790982857887352,
-      5.203245510944068
+      5.275486077927644,
+      5.676652384575418
     ],
-    "ece_reduction_pct": 76.02747607051424
+    "ece_reduction_pct": 84.22860458775187
   }
 }

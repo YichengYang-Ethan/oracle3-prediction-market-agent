@@ -6,8 +6,9 @@
     "num_leaves": 15,
     "learning_rate": 0.05,
     "min_child_samples": 100,
-    "n_estimators": 157
+    "n_estimators": 229
   },
+  "recalibration": "isotonic",
   "features": [
     "price",
     "logit_price",
@@ -37,12 +38,12 @@
     "cat_other"
   ],
   "trained_on": {
-    "snapshots": 111488,
-    "contracts": 41505,
-    "events": 14126,
+    "snapshots": 964103,
+    "contracts": 349297,
+    "events": 112401,
     "contracts_by_platform": {
-      "kalshi": 22163,
-      "polymarket": 19342
+      "kalshi": 190414,
+      "polymarket": 158883
     },
     "prediction_times": [
       "2022-07-25T20:00:00+00:00",
@@ -51,60 +52,60 @@
   },
   "out_of_sample": {
     "model": {
-      "brier": 0.11228613508676911,
-      "log_loss": 0.3569554513536673,
-      "ece": 0.009965431216894896,
-      "ece_15": 0.010105474580599473,
-      "n": 96488,
-      "mean_prediction": 0.3004048518352993,
-      "outcome_rate": 0.30160227178509247
+      "brier": 0.11200136425068316,
+      "log_loss": 0.34435030334207184,
+      "ece": 0.005996717489609714,
+      "ece_15": 0.006082544915163466,
+      "n": 833015,
+      "mean_prediction": 0.28288441414984267,
+      "outcome_rate": 0.2771126570349874
     },
     "market": {
-      "brier": 0.11764643164694055,
-      "log_loss": 0.3647216162913679,
-      "ece": 0.04157022116739908,
-      "ece_15": 0.042135306981179,
-      "n": 96488,
-      "mean_prediction": 0.34257017971146675,
-      "outcome_rate": 0.30160227178509247
+      "brier": 0.11850999171691086,
+      "log_loss": 0.36118474174243553,
+      "ece": 0.04131951855608845,
+      "ece_15": 0.041549386565668096,
+      "n": 833015,
+      "mean_prediction": 0.31707389092633387,
+      "outcome_rate": 0.2771126570349874
     },
     "wang": {
-      "brier": 0.11487774505456287,
-      "log_loss": 0.35853902105221896,
-      "ece": 0.018730353887281365,
-      "ece_15": 0.021057395188389855,
-      "n": 96488,
-      "mean_prediction": 0.29889786264181367,
-      "outcome_rate": 0.30160227178509247
+      "brier": 0.11586880759867471,
+      "log_loss": 0.3552198410243573,
+      "ece": 0.01883932462395479,
+      "ece_15": 0.02203167123395836,
+      "n": 833015,
+      "mean_prediction": 0.28048510478707245,
+      "outcome_rate": 0.2771126570349874
     },
     "vs_market": {
-      "brier_reduction_pct": 4.556276365659606,
+      "brier_reduction_pct": 5.492049549522449,
       "brier_reduction_pct_ci95": [
-        3.8252147001074004,
-        5.223429288957631
+        5.295953945976409,
+        5.70009941676098
       ],
-      "brier_difference": -0.0053602965601714375,
+      "brier_difference": -0.006508627466227698,
       "brier_difference_ci95": [
-        -0.0061428458984261495,
-        -0.004495576363088379
+        -0.006750397790483175,
+        -0.006276099993701394
       ],
-      "ece_reduction_pct": 76.02747607051424,
+      "ece_reduction_pct": 85.48696185443309,
       "ece_reduction_pct_ci95": [
-        69.35300353338633,
-        82.2897140151931
+        82.78861158245554,
+        87.15573960732979
       ],
       "folds_beating_market_on_brier": 5,
       "folds": 5
     }
   },
   "files": {
-    "model.txt": "789cabe8b87b2b9ca6e0584f8c196617f1e4e8eade4cab5f109d8d441b4f2be0",
-    "isotonic.json": "d121668c73bed391f7459ebe9898dd25631f564d45c02065ec162e3d3e36129c"
+    "model.txt": "9ac0b2b5b1b7a474d955d80aa75cb619555f629840bb8fdfaab6edc80d7f7665",
+    "isotonic.json": "ee391080002d7c72ab801c08e9034c1a1951ab16d2be87d3e8363526af4a0a14"
   },
   "libraries": {
     "scikit-learn": "1.9.1",
     "lightgbm": "4.7.0",
     "numpy": "2.5.4"
   },
-  "created_at": "2026-11-13T00:02:22.092330+00:00"
+  "created_at": "2026-11-13T06:42:52.433673+00:00"
 }
