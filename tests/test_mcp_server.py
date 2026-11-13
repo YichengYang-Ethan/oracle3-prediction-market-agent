@@ -177,6 +177,7 @@ async def test_tool_surface_has_no_live_trading():
         'check_constraint_live',
         'list_relation_types',
         'fair_value',
+        'model_probability',
         'list_relations',
         'paper_order',
         'paper_portfolio',

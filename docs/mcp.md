@@ -54,6 +54,7 @@ The server is listed in the MCP Registry as `io.github.YichengYang-Ethan/oracle3
 | `check_constraint` | `relation`, `quotes`, `contracts`, `maker` | The same, on quotes you supply | none |
 | `trading_fee` | `venue`, `price`, `contracts`, `maker`, schedule parameters | Fee for one fill | none |
 | `fair_value` | `market_price`, `lam` | Probability implied under the Wang transform | none |
+| `model_probability` | `venue`, `market_id` | Calibrated model probability for an open market, its market price, the model's out-of-sample scores and the features used ([details](ml.md)); needs `pip install 'oracle3[ml]'` | read-only |
 | `list_relation_types` | | Supported relations and their bounds | none |
 | `list_relations` | `market_id`, `spread_type`, `status` | Relations saved locally, for example by `oracle3-extras kairos sync` | reads `~/.oracle3/relations.json` |
 | `paper_order` | `venue`, `market_id`, `side`, `contracts`, `limit_price`, optional `request_id` | Fill against the live book, with fees; original result on retry | writes the paper ledger |

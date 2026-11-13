@@ -1,0 +1,162 @@
+{
+  "market": {
+    "brier": 0.11850999171691086,
+    "ece": 0.04131951855608845
+  },
+  "price_only/raw": {
+    "features": [
+      "price",
+      "logit_price",
+      "extremity"
+    ],
+    "brier": 0.11418790518726805,
+    "ece": 0.003741153127253303,
+    "brier_reduction_pct": 3.647022894041818,
+    "brier_reduction_pct_ci95": [
+      3.4633637298456614,
+      3.8509231207746173
+    ],
+    "ece_reduction_pct": 90.94579690667271
+  },
+  "price_only/isotonic": {
+    "features": [
+      "price",
+      "logit_price",
+      "extremity"
+    ],
+    "brier": 0.11441351734183869,
+    "ece": 0.004988366344430528,
+    "brier_reduction_pct": 3.456648942190099,
+    "brier_reduction_pct_ci95": [
+      3.2870619362696742,
+      3.655421266506472
+    ],
+    "ece_reduction_pct": 87.92733671942679
+  },
+  "price_venue_category/raw": {
+    "features": [
+      "price",
+      "logit_price",
+      "extremity",
+      "is_kalshi",
+      "cat_sports",
+      "cat_politics",
+      "cat_economics",
+      "cat_finance",
+      "cat_crypto",
+      "cat_weather",
+      "cat_culture",
+      "cat_science_tech",
+      "cat_other"
+    ],
+    "brier": 0.11378664674466739,
+    "ece": 0.007939146562520635,
+    "brier_reduction_pct": 3.9856090645304376,
+    "brier_reduction_pct_ci95": [
+      3.805300946634935,
+      4.192994320626501
+    ],
+    "ece_reduction_pct": 80.78596547115188
+  },
+  "price_venue_category/isotonic": {
+    "features": [
+      "price",
+      "logit_price",
+      "extremity",
+      "is_kalshi",
+      "cat_sports",
+      "cat_politics",
+      "cat_economics",
+      "cat_finance",
+      "cat_crypto",
+      "cat_weather",
+      "cat_culture",
+      "cat_science_tech",
+      "cat_other"
+    ],
+    "brier": 0.11394111501141505,
+    "ece": 0.005191288075935277,
+    "brier_reduction_pct": 3.855267087023051,
+    "brier_reduction_pct_ci95": [
+      3.6622577630578514,
+      4.068867887423449
+    ],
+    "ece_reduction_pct": 87.43623290554933
+  },
+  "all_features/raw": {
+    "features": [
+      "price",
+      "logit_price",
+      "extremity",
+      "log_hours_to_end",
+      "log_life_hours",
+      "elapsed_fraction",
+      "dp_life05",
+      "dp_life20",
+      "dp_1h",
+      "dp_24h",
+      "vol_logit_life20",
+      "hours_since_change",
+      "spread",
+      "log_volume_to_date",
+      "log_volume_life10",
+      "active_share_life10",
+      "is_kalshi",
+      "cat_sports",
+      "cat_politics",
+      "cat_economics",
+      "cat_finance",
+      "cat_crypto",
+      "cat_weather",
+      "cat_culture",
+      "cat_science_tech",
+      "cat_other"
+    ],
+    "brier": 0.11201520981094219,
+    "ece": 0.008044614532528579,
+    "brier_reduction_pct": 5.480366517519464,
+    "brier_reduction_pct_ci95": [
+      5.300177391936055,
+      5.689622281271522
+    ],
+    "ece_reduction_pct": 80.53071571584611
+  },
+  "all_features/isotonic": {
+    "features": [
+      "price",
+      "logit_price",
+      "extremity",
+      "log_hours_to_end",
+      "log_life_hours",
+      "elapsed_fraction",
+      "dp_life05",
+      "dp_life20",
+      "dp_1h",
+      "dp_24h",
+      "vol_logit_life20",
+      "hours_since_change",
+      "spread",
+      "log_volume_to_date",
+      "log_volume_life10",
+      "active_share_life10",
+      "is_kalshi",
+      "cat_sports",
+      "cat_politics",
+      "cat_economics",
+      "cat_finance",
+      "cat_crypto",
+      "cat_weather",
+      "cat_culture",
+      "cat_science_tech",
+      "cat_other"
+    ],
+    "brier": 0.11202832693676236,
+    "ece": 0.006516664653917944,
+    "brier_reduction_pct": 5.469298146295953,
+    "brier_reduction_pct_ci95": [
+      5.275486077927644,
+      5.676652384575418
+    ],
+    "ece_reduction_pct": 84.22860458775187
+  }
+}

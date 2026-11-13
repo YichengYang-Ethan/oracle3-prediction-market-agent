@@ -58,6 +58,7 @@ nav:
   - oracle3-extras: extras.md
   - Research:
       - Do arbitrage edges survive fees?: research/fee-frontier.md
+      - Calibrated probabilities (ML layer): ml.md
   - Getting Started:
       - Quick Start: CLI_QUICK_START.md
   - CLI Reference:

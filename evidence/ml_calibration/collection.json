@@ -1,0 +1,119 @@
+{
+  "collected_at": "2026-11-12/13 (resumed from the cache several times; request counts are for the final run only)",
+  "command": [
+    "python -m oracle3.ml.collect kalshi --env-file <key file> --out <cache>",
+    "python -m oracle3.ml.collect polymarket --out <cache> --workers 12"
+  ],
+  "window_scheduled_end": [
+    "2024-01-01T00:00:00Z",
+    "2026-11-05T00:00:00Z"
+  ],
+  "sampling": {
+    "events_per_series": 200,
+    "events_per_category_cap": 20000,
+    "markets_per_event": 4,
+    "snapshot_fractions_of_scheduled_life": [
+      0.25,
+      0.5,
+      0.75
+    ],
+    "event_time_anchor": "Kalshi strike_date, else the date in the event ticker; Polymarket endDate",
+    "sample_tags": {
+      "kalshi": "20240101-20261105_s200_c20000_e4",
+      "polymarket": "20240101-20261105_s200_c20000_e4"
+    }
+  },
+  "kalshi": {
+    "series_listed": 16332,
+    "settled_events_listed": 981045,
+    "listing_note": "The public /events listing leaves out events from before the move to KX tickers; they are in /historical/markets but can only be read by exact event ticker.",
+    "sampled_events_by_category": {
+      "crypto": 5405,
+      "culture": 9595,
+      "economics": 4825,
+      "finance": 11389,
+      "other": 4,
+      "politics": 2406,
+      "science_tech": 620,
+      "sports": 20000,
+      "weather": 11436
+    },
+    "sampled_events": 65680,
+    "markets_selected": 215001,
+    "max_bars_per_request": 4900,
+    "requests_final_run": [
+      {
+        "ok": 126362,
+        "retry": 197,
+        "error": 0
+      }
+    ],
+    "source": "Kalshi Trade API v2 (historical and live market, event and candlestick endpoints), read-only signed GETs"
+  },
+  "polymarket": {
+    "weeks": 149,
+    "events_listed": 317856,
+    "sampled_by_category": {
+      "crypto": {
+        "events": 4057,
+        "markets": 11157
+      },
+      "culture": {
+        "events": 2852,
+        "markets": 9767
+      },
+      "economics": {
+        "events": 1227,
+        "markets": 3492
+      },
+      "finance": {
+        "events": 5459,
+        "markets": 16552
+      },
+      "other": {
+        "events": 187,
+        "markets": 338
+      },
+      "politics": {
+        "events": 8502,
+        "markets": 21991
+      },
+      "science_tech": {
+        "events": 951,
+        "markets": 3025
+      },
+      "sports": {
+        "events": 20000,
+        "markets": 56152
+      },
+      "weather": {
+        "events": 14546,
+        "markets": 57758
+      }
+    },
+    "sampled_markets": 180232,
+    "markets_selected": 180232,
+    "excluded_tags": {
+      "102127": "Up or Down",
+      "102892": "5M",
+      "102467": "15M",
+      "102175": "1H",
+      "102531": "4H"
+    },
+    "minimum_scheduled_life_hours": 24.0,
+    "price_history_grain_seconds": 10800,
+    "requests_final_run": [
+      {
+        "ok": 0,
+        "retry": 0,
+        "error": 0
+      },
+      {
+        "ok": 50298,
+        "retry": 0,
+        "error": 0
+      }
+    ],
+    "source": "Gamma API events/keyset; Data API v2 prices-history (interval=max, 3-hour buckets)"
+  }
+}

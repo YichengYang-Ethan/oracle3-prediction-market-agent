@@ -6,7 +6,7 @@
 
 Connect AI agents to Kalshi and Polymarket through MCP. Give them reusable Skills for market research and strategy development, then build on a Python engine for paper and live execution.
 
-**13 MCP tools · 6 agent Skills · Kalshi & Polymarket data · Python 3.10+**
+**14 MCP tools · 6 agent Skills · Kalshi & Polymarket data · Python 3.10+**
 
 [![Tests](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/actions/workflows/pytest.yml/badge.svg)](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/actions/workflows/pytest.yml)
 [![GitHub stars](https://img.shields.io/github/stars/YichengYang-Ethan/oracle3-prediction-market-agent?style=social)](https://github.com/YichengYang-Ethan/oracle3-prediction-market-agent/stargazers)
@@ -65,11 +65,12 @@ The synthetic example returns **$5.00 gross edge − $3.4125 fees = $1.5875 calc
 | Inspect market conditions | `get_quote`, `get_orderbook` | Prices, fee information, and displayed depth |
 | Analyze related contracts | `check_constraint`, `check_constraint_live` | Baskets and net edge under a stated relationship |
 | Calculate fees and model values | `trading_fee`, `fair_value` | Fee estimates and parameterized model outputs |
+| Get a calibrated probability | `model_probability` | A machine-learning probability next to the market price, with the model's out-of-sample scores ([how it was built and tested](docs/ml.md)) |
 | Try a paper entry | `paper_order`, `paper_portfolio` | Simulated fills and holdings in a local ledger |
 
 Relationship checks cover **implication, exclusivity, complement, same event, and event sum**. They expose assumptions with their results, giving agents and researchers a common calculation layer.
 
-[All 13 MCP tools](docs/mcp.md) · [Workflow examples](docs/agent-quickstart.md)
+[All 14 MCP tools](docs/mcp.md) · [Workflow examples](docs/agent-quickstart.md)
 
 ## Reusable agent Skills
 

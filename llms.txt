@@ -19,6 +19,7 @@
 - For safe paper retries, supply optional nonblank `request_id`. Once a result is saved, the same key and identical venue/market/side/quantity/limit return it; changed intent is an error. Unfilled/rejected results are remembered too. Omit the key only when each call should be a new order. `paper_reset` with `{"confirm":true}` clears positions, fills and retry history; `paper_portfolio` takes `{}`.
 - Ledger operations lock across cooperating processes on a local filesystem and write atomically. A shared path is one paper account, not separate user state. Valid older JSON loads automatically. Corrupt/nonfinite/inconsistent ledgers fail closed and remain intact, even on reset: preserve a copy, restore a valid backup or set a fresh `ORACLE3_MCP_LEDGER` path and restart. Do not edit the file or remove its `.lock` sidecar while servers use it.
 - `fair_value` returns a probability implied by a chosen Wang-transform parameter, not independently verified event truth. Recorded or fitted relations also require interpretation.
+- `model_probability` returns a calibrated machine-learning probability for one open market next to its market price, plus the model's out-of-sample scores against market prices. It needs `pip install 'oracle3[ml]'`; it is an estimate, not a trade signal. Method and results: [ML layer](https://yichengyang-ethan.github.io/oracle3-prediction-market-agent/ml/).
 
 ## Install and source
 
