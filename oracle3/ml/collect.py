@@ -824,8 +824,8 @@ def main(argv: list[str] | None = None) -> None:
         default='2026-11-05T00:00:00Z',
         help='latest scheduled end, exclusive (UTC)',
     )
-    ap.add_argument('--per-series', type=int, default=40)
-    ap.add_argument('--per-category', type=int, default=8000)
+    ap.add_argument('--per-series', type=int, default=100)
+    ap.add_argument('--per-category', type=int, default=20000)
     ap.add_argument('--per-event', type=int, default=4)
     ap.add_argument('--workers', type=int, default=8)
     ap.add_argument(
