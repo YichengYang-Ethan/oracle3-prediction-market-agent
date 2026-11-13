@@ -399,6 +399,8 @@ def test_cache_writes_gzip_and_still_reads_plain_files(tmp_path):
     (tmp_path / 'old' / 'b.json').write_text('{}')
     assert [p.name for p in cache.files('old')] == ['a.json.gz', 'b.json']
     assert cache.load('old', 'missing.json') is None
+    assert cache.has('old', 'a.json') and cache.has('old', 'b.json')
+    assert not cache.has('old', 'missing.json')
 
 
 class _FakeKalshi:

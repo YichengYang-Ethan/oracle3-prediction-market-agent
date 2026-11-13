@@ -174,6 +174,9 @@ class Cache:
         p = self.root.joinpath(*parts)
         return p.with_name(p.name + '.gz')
 
+    def has(self, *parts: str) -> bool:
+        return self._gz(parts).exists() or self.root.joinpath(*parts).exists()
+
     def load(self, *parts: str) -> Any:
         for p in (self._gz(parts), self.root.joinpath(*parts)):
             if p.exists():
@@ -436,7 +439,7 @@ class KalshiCollector:
     def candles_of(self, job: tuple[dict, dict]) -> int:
         market, event = job
         ticker = market['ticker']
-        if self.cache.load('candles', f'{ticker}.json') is not None:
+        if self.cache.has('candles', f'{ticker}.json'):
             return 0
         open_ts = iso_ts(market.get('open_time'))
         sched_end = iso_ts(market.get('expected_expiration_time')) or iso_ts(
@@ -587,7 +590,7 @@ class PolymarketCollector:
     def events_in(self, window: tuple[str, str]) -> int:
         lo, hi = window
         name = f'{lo.replace(":", "")}_{hi.replace(":", "")}.json'
-        if self.cache.load('events', name) is not None:
+        if self.cache.has('events', name):
             return 0
         keep_e = (
             'id',
@@ -732,7 +735,7 @@ class PolymarketCollector:
     def history_of(self, item: dict) -> int:
         m = item['market']
         token = m['yes_token']
-        if self.cache.load('history', f'{token[-24:]}.json') is not None:
+        if self.cache.has('history', f'{token[-24:]}.json'):
             return 0
         open_ts = iso_ts(m.get('startDate')) or iso_ts(m.get('createdAt'))
         sched_end = iso_ts(m.get('endDate'))
