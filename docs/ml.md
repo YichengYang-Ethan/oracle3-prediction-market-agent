@@ -16,7 +16,7 @@ when `KALSHI_API_KEY_ID` and `KALSHI_PRIVATE_KEY_PATH` are set (or given in `--e
 raises the rate limit.
 
 - **Kalshi:** settled events from each series' public event listing whose date falls in the window,
-  up to 100 per series spread evenly over time and at most 20,000 per category; up to four markets
+  up to 200 per series spread evenly over time and at most 20,000 per category; up to four markets
   per event, chosen by a seeded hash of the ticker. Events from before Kalshi moved to `KX` tickers
   are not in the public listing (they stay in an archive that can be read by exact ticker but not
   listed), and most current series only began in late 2025 or 2026. On both venues most sampled
