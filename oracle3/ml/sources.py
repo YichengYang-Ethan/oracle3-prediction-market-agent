@@ -167,7 +167,7 @@ class _Reader:
 class KalshiReader(_Reader):
     def __init__(self, signer: _KalshiSigner | None = None, rate: float | None = None):
         # Signed Basic tier: 200 read tokens/s = 20 requests/s; anonymous: about 5/s per IP.
-        super().__init__(KALSHI_REST, rate or (18.0 if signer else 4.0))
+        super().__init__(KALSHI_REST, rate or (18.0 if signer else 4.0), retries=10)
         self.signer = signer
 
     def _headers(self, path: str) -> dict[str, str]:

@@ -447,6 +447,48 @@ def test_kalshi_listing_is_reused_only_when_it_covers_the_window(tmp_path):
     assert col.reader.calls == 2  # a listing cut by the page limit is never trusted
 
 
+class _FlakyKalshi:
+    """Fails the first candlestick request with a 429, then answers."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def get(self, path, **params):
+        from oracle3.ml.sources import SourceError
+
+        self.calls += 1
+        if self.calls == 1:
+            raise SourceError(429, path, 'too many requests')
+        bar = {
+            'end_period_ts': int(params['start_ts']) + 7200,
+            'yes_bid': {'close_dollars': '0.40'},
+            'yes_ask': {'close_dollars': '0.42'},
+            'price': {'close_dollars': '0.41'},
+            'volume_fp': '5',
+        }
+        return {'candlesticks': [bar]}
+
+
+def test_kalshi_bars_are_not_cached_when_a_request_fails(tmp_path):
+    from oracle3.ml.collect import Cache, KalshiCollector
+
+    col = object.__new__(KalshiCollector)
+    col.cache, col.reader = Cache(tmp_path), _FlakyKalshi()
+    market = {
+        'ticker': 'KXT-1',
+        'archived': True,
+        'open_time': '2026-01-01T00:00:00Z',
+        'expected_expiration_time': '2026-01-05T00:00:00Z',
+        'close_time': '2026-01-05T00:00:00Z',
+    }
+    job = (market, {'series_ticker': 'KXT'})
+    assert col.candles_of(job) == -1  # rate-limited: nothing cached
+    assert not col.cache.has('candles', 'KXT-1.json')
+    assert col.candles_of(job) == 1  # the retry fetches and caches the bars
+    assert col.cache.load('candles', 'KXT-1.json')['bars']
+    assert col.candles_of(job) == 0
+
+
 def test_polymarket_listing_weeks_sit_on_a_fixed_grid():
     from oracle3.ml.collect import PolymarketCollector, iso_ts
 

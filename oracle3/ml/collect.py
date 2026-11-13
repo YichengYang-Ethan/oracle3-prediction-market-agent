@@ -50,6 +50,9 @@ POLY_MIN_LIFE_S = (
 # Auto-generated short-horizon series ("Up or Down", 5M, 15M, 1H, 4H) are thousands of events a week whose
 # trading window is far shorter than the 3-hour price grain; leaving them out keeps the weekly listing complete.
 POLY_EXCLUDED_TAGS = (102127, 102892, 102467, 102175, 102531)
+RETRY_PASSES = (
+    2  # extra passes over requests that still failed after the reader's own retries
+)
 WEEK_S = 7 * 86400
 WEEK_GRID_ORIGIN = (
     2 * 86400
@@ -212,6 +215,7 @@ def run_pool(
     workers: int,
     label: str,
     every: int = 500,
+    status: Callable[[], Any] | None = None,
 ) -> list[Any]:
     items = list(items)
     out: list[Any] = []
@@ -220,7 +224,11 @@ def run_pool(
         for i, res in enumerate(pool.map(fn, items), 1):
             out.append(res)
             if i % every == 0 or i == len(items):
-                print(f'[{label}] {i}/{len(items)} {time.time() - t0:.0f}s', flush=True)
+                extra = f' {status()}' if status else ''
+                print(
+                    f'[{label}] {i}/{len(items)} {time.time() - t0:.0f}s{extra}',
+                    flush=True,
+                )
     return out
 
 
@@ -409,6 +417,7 @@ class KalshiCollector:
             'market_type',
         )
         markets: list[dict] = []
+        failed = False
         for path, extra in (
             ('/historical/markets', {}),
             ('/markets', {'status': 'settled'}),
@@ -423,6 +432,7 @@ class KalshiCollector:
             except SourceError as exc:
                 if exc.status != 404:
                     print(f'[kalshi] markets {name} via {path}: {exc}', flush=True)
+                    failed = True
                 rows = []
             if rows:
                 markets = [
@@ -433,10 +443,13 @@ class KalshiCollector:
                     for m in rows
                 ]
                 break
+        if failed and not markets:
+            return []  # not cached, so a retry pass or a later run asks again
         self.cache.save(markets, 'markets', f'{name}.json')
         return markets
 
     def candles_of(self, job: tuple[dict, dict]) -> int:
+        """Fetch and cache one market's bars: 1 if fetched, 0 if already cached, -1 if a request failed."""
         market, event = job
         ticker = market['ticker']
         if self.cache.has('candles', f'{ticker}.json'):
@@ -488,7 +501,7 @@ class KalshiCollector:
                         if exc.status == 404:
                             continue
                         print(f'[kalshi] candles {ticker}: {exc}', flush=True)
-                        rows = []
+                        return -1  # not cached: a partial history must never pass for a complete one
                     for c in rows:
                         bar = _kalshi_bar(c)
                         bars[bar[0]] = bar
@@ -503,7 +516,27 @@ class KalshiCollector:
         run_pool(self.events_of, series_list, self.workers, 'kalshi events', every=1000)
         sample = self.sample_events(series_list)
         print(f'[kalshi] {len(sample)} sampled events', flush=True)
-        run_pool(self.markets_of, sample, self.workers, 'kalshi markets')
+        stats = lambda: self.reader.stats  # noqa: E731
+        run_pool(self.markets_of, sample, self.workers, 'kalshi markets', status=stats)
+        for _ in range(RETRY_PASSES):
+            missing = [
+                e
+                for e in sample
+                if not self.cache.has('markets', f'{e["event_ticker"]}.json')
+            ]
+            if not missing:
+                break
+            print(
+                f'[kalshi] retrying the market lists of {len(missing)} events',
+                flush=True,
+            )
+            time.sleep(30)
+            run_pool(
+                self.markets_of,
+                missing,
+                max(1, self.workers // 2),
+                'kalshi markets retry',
+            )
         jobs: list[tuple[dict, dict]] = []
         for e in sample:
             markets = [
@@ -516,7 +549,24 @@ class KalshiCollector:
             ]
             jobs += [(m, e) for m in markets]
         print(f'[kalshi] {len(jobs)} markets to fetch bars for', flush=True)
-        run_pool(self.candles_of, jobs, self.workers, 'kalshi bars')
+        results = run_pool(
+            self.candles_of, jobs, self.workers, 'kalshi bars', status=stats
+        )
+        pending = [job for job, r in zip(jobs, results) if r < 0]
+        for _ in range(RETRY_PASSES):
+            if not pending:
+                break
+            print(f'[kalshi] retrying the bars of {len(pending)} markets', flush=True)
+            time.sleep(30)
+            again = run_pool(
+                self.candles_of, pending, max(1, self.workers // 2), 'kalshi bars retry'
+            )
+            pending = [job for job, r in zip(pending, again) if r < 0]
+        if pending:
+            print(
+                f'[kalshi] {len(pending)} markets still failed and stay out of the dataset',
+                flush=True,
+            )
         # The dataset is built from this selection only, never from whatever else sits in the cache.
         self.cache.save(
             {'sample': self.tag(), 'files': [m['ticker'] for m, _ in jobs]},
