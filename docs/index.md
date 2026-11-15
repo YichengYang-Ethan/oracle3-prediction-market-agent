@@ -5,7 +5,7 @@
 Connect agents to Kalshi and Polymarket through MCP, guide their work with
 reusable Skills, and develop strategies with a Python execution engine.
 
-**13 MCP tools · 6 agent Skills · Kalshi & Polymarket data · Python 3.10+**
+**14 MCP tools · 6 agent Skills · Kalshi & Polymarket data · Python 3.10+**
 
 [Agent quickstart](agent-quickstart.md) · [MCP tool reference](mcp.md) ·
 [Project and contributions](research-review.md) ·
@@ -71,7 +71,7 @@ background, current capabilities, and direction for agent research.
 
 ## Go deeper
 
-- [MCP reference](mcp.md): all 13 tools and their inputs and outputs.
+- [MCP reference](mcp.md): all 14 tools and their inputs and outputs.
 - [CLI monitoring](CLI_MONITORING.md): operate and inspect engine sessions.
 - [Agent harness](agent-harness.md): reproducible software validation.
 - [Execution reference](runtime-integrity.md): accounting and execution semantics.
