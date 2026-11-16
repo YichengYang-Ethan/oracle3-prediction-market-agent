@@ -32,7 +32,7 @@ and evaluate:
 
 | Area | What Oracle3 provides |
 |---|---|
-| MCP integration | Thirteen tools for Kalshi and Polymarket market discovery, market details, order books, relationship checks, and local paper trading |
+| MCP integration | Fourteen tools for Kalshi and Polymarket market discovery, market details, order books, relationship checks, model probabilities, and local paper trading |
 | Reusable agent Skills | Six documented workflows covering data discovery, constraint checks, strategy authoring, and paper/live operations |
 | Market reasoning tools | Shared fee calculations and five relationship checks that return structured baskets, costs, and assumptions |
 | Execution infrastructure | Python strategy interfaces, paper/live adapters, risk controls, and inspectable execution state; MCP paper operations use a separate local ledger |
