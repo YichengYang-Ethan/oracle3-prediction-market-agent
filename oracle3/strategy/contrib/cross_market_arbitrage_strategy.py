@@ -2,14 +2,13 @@
 
 Detects same-event price discrepancies across prediction market platforms
 and trades when the spread exceeds a configurable threshold. Uses a
-position state machine to manage entries and exits, and applies
-a flat per-side fee constant (below venue taker fees at mid prices; see oracle3.fees).
+position state machine to manage entries and exits, and prices each leg
+with its venue's published fee schedule from oracle3.fees.
 
 Agent tool: find_arbitrage_opportunities() -> list[dict]
 
 v2 improvements over v1:
-- Per-side fee constant (0.005 per side, net_edge = gross - 2*fee); see oracle3.fees
-  for the venues' published schedules
+- Per-leg venue fee schedules from oracle3.fees (net_edge = gross - leg fees)
 - Position state machine (flat -> long_a_short_b / long_b_short_a -> flat)
 - Exit logic when spread collapses (not just entry)
 - Best bid/ask from order books instead of just last price
@@ -21,22 +20,20 @@ from __future__ import annotations
 import logging
 import re
 import time
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from decimal import Decimal
 from difflib import SequenceMatcher
 from typing import Any, ClassVar
 
 from oracle3.events.events import Event, OrderBookEvent, PriceChangeEvent
+from oracle3.strategy.fee_utils import estimate_fee
 from oracle3.strategy.quant_strategy import QuantStrategy
 from oracle3.ticker.ticker import Ticker
 from oracle3.trader.trader import Trader
 from oracle3.trader.types import TradeSide
 
 logger = logging.getLogger(__name__)
-
-# Flat fee per side per contract (round trip = 2x this). Below the venues'
-# taker fees at mid prices; oracle3.fees implements the published schedules.
-_FEE_PER_SIDE = Decimal('0.005')
 
 _STOPWORDS = frozenset(
     {'will', 'the', 'a', 'an', 'of', 'in', 'on', 'by', 'to', 'for', 'be', 'is', 'at'}
@@ -191,7 +188,7 @@ class CrossMarketArbitrageStrategy(QuantStrategy):
     similarity, and places arb trades when the spread exceeds ``min_edge``.
 
     v2 adds:
-    - Per-side fee constant (0.005 per side by default; see oracle3.fees)
+    - Per-leg venue fee schedules from oracle3.fees
     - Position state machine with proper entry and exit
     - Exit logic when spread collapses below ``exit_threshold``
     - Best bid/ask order book prices for accurate edge calculation
@@ -208,9 +205,10 @@ class CrossMarketArbitrageStrategy(QuantStrategy):
         exit_threshold: float = 0.005,
         trade_size: float = 10.0,
         cooldown_seconds: float = 60.0,
-        fee_per_side: float = 0.005,
+        fee_per_side: float | None = None,
         min_similarity: float = 0.60,
         max_hold_seconds: float = 3600.0,
+        market_fee_terms: Mapping[str, Any] | None = None,
     ) -> None:
         """
         Parameters
@@ -224,20 +222,23 @@ class CrossMarketArbitrageStrategy(QuantStrategy):
         cooldown_seconds:
             Minimum seconds between arb entries on the same pair.
         fee_per_side:
-            Flat fee per side per contract (default 0.005). Venue taker fees are
-            higher at mid prices; see oracle3.fees.
-            Total round-trip fee = 2 * fee_per_side.
+            Optional flat dollar fee per side per contract that overrides the
+            venue schedules. By default each leg pays its venue's taker fee
+            (oracle3.fees); pairs on a venue without one (DFlow) are skipped.
         min_similarity:
             Minimum name similarity score (0-1) for cross-platform matching.
         max_hold_seconds:
             Maximum time to hold an arb position before forced exit.
+        market_fee_terms:
+            Per-market schedule overrides, keyed as in ``resolve_fee_schedule``.
         """
         super().__init__()
         self.min_edge = Decimal(str(min_edge))
         self.exit_threshold = Decimal(str(exit_threshold))
         self.trade_size = Decimal(str(trade_size))
         self.cooldown_seconds = cooldown_seconds
-        self.fee_per_side = Decimal(str(fee_per_side))
+        self.fee_per_side = None if fee_per_side is None else Decimal(str(fee_per_side))
+        self.market_fee_terms = dict(market_fee_terms or {})
         self._max_hold_seconds = max_hold_seconds
 
         self._grouper = TickerGrouper(min_similarity=min_similarity)
@@ -302,8 +303,28 @@ class CrossMarketArbitrageStrategy(QuantStrategy):
     # Fee-aware edge calculation
     # ------------------------------------------------------------------
 
+    def _pair_fee(
+        self, ticker_a: Ticker, price_a: Decimal, ticker_b: Ticker, price_b: Decimal
+    ) -> Decimal:
+        """Fee per contract for filling ``trade_size`` on both legs at YES prices.
+
+        A NO fill at ``1 - p`` pays the YES fee at ``p`` under oracle3.fees.
+        Raises ``ValueError`` when a leg's fee cannot be established.
+        """
+        fees = [
+            estimate_fee(
+                ticker,
+                price,
+                self.trade_size,
+                market_fee_terms=self.market_fee_terms,
+                legacy_fee_per_contract=self.fee_per_side,
+            )
+            for ticker, price in ((ticker_a, price_a), (ticker_b, price_b))
+        ]
+        return sum(fees, Decimal('0')) / self.trade_size
+
     def _compute_edge(
-        self, buy_price: Decimal, sell_price: Decimal
+        self, buy: Ticker, buy_price: Decimal, sell: Ticker, sell_price: Decimal
     ) -> tuple[Decimal, Decimal, Decimal]:
         """Compute gross edge, fee cost, and net edge for a pair.
 
@@ -313,12 +334,12 @@ class CrossMarketArbitrageStrategy(QuantStrategy):
         For buy_a + sell_b (A cheaper):
             gross_edge = price_b - price_a
             (we buy A YES at ask_a, and buy B NO at (1 - bid_b))
-            net_edge = gross_edge - 2 * fee_per_side
+            net_edge = gross_edge - venue fees of both legs (per contract)
 
         Returns (gross_edge, fees, net_edge).
         """
         gross_edge = sell_price - buy_price
-        fees = self.fee_per_side * 2
+        fees = self._pair_fee(buy, buy_price, sell, sell_price)
         net_edge = gross_edge - fees
         return gross_edge, fees, net_edge
 
@@ -367,12 +388,20 @@ class CrossMarketArbitrageStrategy(QuantStrategy):
                     if bid_a is None or ask_a is None or bid_b is None or ask_b is None:
                         continue
 
-                    # Direction 1: A cheaper -> buy A YES (at ask_a), sell B YES (at bid_b)
-                    # Equivalent to: buy A YES + buy B NO
-                    gross_1, fees_1, net_1 = self._compute_edge(ask_a, bid_b)
+                    try:
+                        # Direction 1: A cheaper -> buy A YES (at ask_a), sell B YES (at bid_b)
+                        # Equivalent to: buy A YES + buy B NO
+                        gross_1, fees_1, net_1 = self._compute_edge(
+                            ta, ask_a, tb, bid_b
+                        )
 
-                    # Direction 2: B cheaper -> buy B YES (at ask_b), sell A YES (at bid_a)
-                    gross_2, fees_2, net_2 = self._compute_edge(ask_b, bid_a)
+                        # Direction 2: B cheaper -> buy B YES (at ask_b), sell A YES (at bid_a)
+                        gross_2, fees_2, net_2 = self._compute_edge(
+                            tb, ask_b, ta, bid_a
+                        )
+                    except ValueError as exc:  # a leg's fee cannot be established
+                        logger.debug('Skipping %s: %s', group.label, exc)
+                        continue
 
                     # Pick the better direction
                     if net_1 >= net_2 and net_1 > 0:
@@ -637,16 +666,24 @@ class CrossMarketArbitrageStrategy(QuantStrategy):
             if bid_a is None or ask_a is None or bid_b is None or ask_b is None:
                 continue
 
-            # Compute current edge in same direction as entry
-            if pos.state == 'long_a_short_b':
-                # We bought A YES and B NO.
-                # To exit: sell A YES (at bid_a) and sell B NO (at 1-ask_b).
-                # Current edge for same-direction re-entry:
-                current_gross = bid_b - ask_a
-            else:  # long_b_short_a
-                current_gross = bid_a - ask_b
+            ticker_a = self._ticker_map[symbol_a]
+            ticker_b = self._ticker_map[symbol_b]
 
-            current_net = current_gross - self.fee_per_side * 2
+            # Compute current edge in same direction as entry
+            try:
+                if pos.state == 'long_a_short_b':
+                    # We bought A YES and B NO.
+                    # To exit: sell A YES (at bid_a) and sell B NO (at 1-ask_b).
+                    # Current edge for same-direction re-entry:
+                    edge = self._compute_edge(ticker_a, ask_a, ticker_b, bid_b)
+                    exit_fees = self._pair_fee(ticker_a, bid_a, ticker_b, ask_b)
+                else:  # long_b_short_a
+                    edge = self._compute_edge(ticker_b, ask_b, ticker_a, bid_a)
+                    exit_fees = self._pair_fee(ticker_a, ask_a, ticker_b, bid_b)
+            except ValueError as exc:  # a leg's fee cannot be established
+                logger.warning('Skipping exit check for %s: %s', label, exc)
+                continue
+            current_gross, _, current_net = edge
 
             # Determine exit reason
             exit_reason: str | None = None
@@ -679,7 +716,8 @@ class CrossMarketArbitrageStrategy(QuantStrategy):
                 pnl_a = (1.0 - float(ask_a)) - (1.0 - pos.entry_price_a)
                 pnl_gross = pnl_a + pnl_b
 
-            pnl_net = pnl_gross - float(self.fee_per_side * 4)  # entry + exit fees
+            entry_fees = pos.entry_gross_edge - pos.entry_net_edge
+            pnl_net = pnl_gross - entry_fees - float(exit_fees)
 
             self.record_decision(
                 ticker_name=label[:40],
