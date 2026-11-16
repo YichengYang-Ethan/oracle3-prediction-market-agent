@@ -59,6 +59,9 @@ jobs:
         run: |
           python -m venv "$RUNNER_TEMP/oracle3-release-wheel"
           wheel_python="$RUNNER_TEMP/oracle3-release-wheel/bin/python"
+          # Python 3.10's bundled pip (23.0) leaves the wheel hash out of direct_url.json,
+          # which check_installed_mcp.py needs to confirm it is testing this exact wheel.
+          "$wheel_python" -m pip install --upgrade pip
           "$wheel_python" -m pip install "$GITHUB_WORKSPACE"/dist/*.whl
           "$wheel_python" -m pip check
           cp scripts/check_installed_mcp.py "$RUNNER_TEMP/check_installed_mcp.py"
