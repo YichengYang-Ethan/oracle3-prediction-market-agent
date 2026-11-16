@@ -170,9 +170,20 @@ def kelly_fraction(
 
     After fees, the edge is reduced by the round-trip fee cost.
 
+    Non-finite inputs (NaN/inf for ``p_market``, ``lam`` or ``fee_rate``)
+    return 0.0 so that NaN can never reach position sizing; a negative
+    ``fee_rate`` raises ValueError.
+
     Returns the optimal fraction of bankroll to wager (can be negative
     for NO bets). Capped at [-0.25, 0.25] for safety.
     """
+    if fee_rate < 0:
+        raise ValueError(f'fee_rate must be non-negative, got {fee_rate}')
+    if not (math.isfinite(p_market) and math.isfinite(lam) and math.isfinite(fee_rate)):
+        # NaN/inf inputs carry no sizing information; betting nothing is
+        # safer than letting NaN clamp into a spurious full-size position.
+        return 0.0
+
     p_mkt = _clamp(p_market)
     p_star = _norm_cdf(_norm_ppf(p_mkt) - lam)
     fee_cost = 2 * fee_rate
