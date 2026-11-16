@@ -7,10 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-15
+
 ### Added
 
 - `oracle3.ml`, a machine-learning layer for calibrated probabilities: resumable read-only collection of resolved Kalshi and Polymarket contracts with price histories, leakage-safe snapshot features (displayed price, time to the scheduled end, recent price changes and volatility, Kalshi spread and volume, category), event-grouped purged walk-forward cross-validation with tuning and isotonic recalibration on training folds only (the map is kept only when a check on training data says it helps), and a benchmark of eight learners (penalized logistic regression, a spline GAM, random forest, LightGBM, monotone LightGBM, XGBoost, CatBoost, an MLP) and two ensembles against market prices, a price-only recalibration and the paper's Wang model. `pip install 'oracle3[ml-bench]'` adds XGBoost and CatBoost for rerunning the benchmark. Results are in `evidence/ml_calibration/` and [docs/ml.md](docs/ml.md).
 - MCP tool `model_probability` (14 tools in total): the served model's calibrated probability for an open market next to its market price, with its out-of-sample scores. Requires the new `ml` extra: `pip install 'oracle3[ml]'`.
+- Offline agent-contract regression harness (`scripts/check_agent_contracts.py`): nine deterministic cases replayed through the actual MCP dispatcher and executor, with JSON evidence and CI artifacts (#64). It is a software regression suite, not an LLM benchmark.
+- Reproducible runtime evidence: one offline probe replayed against the revisions before and after #67 records three fixed regressions and a normal-fill control, and is rerun in CI (#68); a project overview of the U Lab origins and later development in [docs/research-review.md](docs/research-review.md) (#68, #69).
+- An agent quickstart with exact tool arguments, expected results and Skill setup in [docs/agent-quickstart.md](docs/agent-quickstart.md) (#65).
+
+### Changed
+
+- Execution contracts are explicit (#64): a spread counts as filled only on exact terminal fills; responses report recovery attempts, residual exposure, uncertain execution and required reconciliation; machine-readable `assessment` flags separate conditional calculations from verified relations and execution. Event-sum arbitrage needs a declared exhaustive, mutually exclusive partition with explicit YES-token IDs, and model residuals need an independent reference forecast. Migration notes are in [docs/agent-harness.md](docs/agent-harness.md).
+- Accounting and execution (#67): performance uses cash-and-inventory NAV and FIFO closing-lot PnL with allocated fees; live order intents are journaled before submission and reconciled from confirmed fills; the MCP paper ledger is locked, reloaded and replaced atomically, with optional `request_id` deduplication; agent tool requests run through one explicit execution path. See [docs/runtime-integrity.md](docs/runtime-integrity.md).
+- CLI command modules load on demand, so starting the MCP server no longer imports live execution providers (#64).
+- README and documentation reorganized around tasks, MCP setup and verification (#65, #69), with pointers to `oracle3-extras` for Agent Wallet and Kairos execution and an acknowledgment of Jiaxuan You and the Coinjure team.
+
+### Fixed
+
+- Entry cash outflow is no longer counted as PnL, irregular fills no longer yield an annualized Sharpe ratio, pending live orders are no longer treated as failures, basket exits no longer touch unrelated inventory, an empty fee schedule no longer reads as zero fees, concurrent paper-ledger writers no longer overwrite each other, and queued agent tool requests are executed (#67).
+- Inputs with nonfinite sizes or prices, blank identities or duplicate contracts are rejected, and tail quotes are no longer clipped into false signals (#64).
+- The documentation now describes the Polymarket `rules` and `resolution_source` fields that `get_market` returns (#66).
 
 ## [1.2.2] - 2026-09-30
 

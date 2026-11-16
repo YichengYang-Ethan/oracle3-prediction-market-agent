@@ -17,8 +17,10 @@ Run this as a client-managed subprocess; stdio waits for MCP protocol input.
 installs and configure the absolute path to its server executable.
 
 This page describes current `main`. The explicit `assessment` fields, paper
-retry handling and execution contracts were added after release 1.2.2. For those behaviors,
-follow the source installation in the [agent quickstart](agent-quickstart.md).
+retry handling, execution contracts and `model_probability` are in release 1.3.0 and
+later (`model_probability` needs `pip install 'oracle3[ml]'`). To run changes that are
+on `main` but not yet released, follow the source installation in the
+[agent quickstart](agent-quickstart.md).
 The quickstart also provides an offline first call with exact arguments and
 expected output.
 
