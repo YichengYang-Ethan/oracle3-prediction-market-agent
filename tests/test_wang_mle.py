@@ -16,6 +16,7 @@ np = pytest.importorskip('numpy')
 scipy = pytest.importorskip('scipy')
 
 from oracle3.pricing.wang_mle import (  # noqa: E402
+    MLEResult,
     WangMLE,
 )
 
@@ -160,6 +161,142 @@ class TestHierarchicalMLE:
         assert df == 1
         assert chi2 > 0
         assert pval < 0.05, f'LR test not significant: chi2={chi2}, p={pval}'
+
+
+class TestPredictInterval:
+    """Test delta-method confidence intervals for fair values."""
+
+    def test_pooled_matches_delta_method(self):
+        prices, outcomes, _ = _generate_wang_data(0.20, n=5000)
+        result = WangMLE().fit(prices=prices, outcomes=outcomes)
+
+        from scipy.stats import norm
+
+        p_star, lower, upper = result.predict_interval(0.5)
+        eta = norm.ppf(0.5) - result.lambda_hat
+        se = np.sqrt(result.vcov_robust[0, 0])
+        z = norm.ppf(0.975)
+
+        assert p_star == pytest.approx(norm.cdf(eta))
+        assert lower == pytest.approx(norm.cdf(eta - z * se))
+        assert upper == pytest.approx(norm.cdf(eta + z * se))
+        assert lower <= p_star <= upper
+
+    def test_pooled_interval_width_shrinks_with_n(self):
+        prices, outcomes, _ = _generate_wang_data(0.20, n=5000, seed=7)
+
+        small = WangMLE().fit(prices=prices[:300], outcomes=outcomes[:300])
+        large = WangMLE().fit(prices=prices, outcomes=outcomes)
+
+        _, small_lower, small_upper = small.predict_interval(0.5)
+        _, large_lower, large_upper = large.predict_interval(0.5)
+
+        assert (small_upper - small_lower) > (large_upper - large_lower)
+
+    def test_hierarchical_interval_with_covariates(self):
+        n = 3000
+        rng = np.random.RandomState(42)
+        from scipy.stats import norm
+
+        volumes = rng.uniform(100, 50000, n)
+        lambdas = 0.25 - 0.06 * np.log(1 + volumes)
+        p_physical = rng.uniform(0.15, 0.85, n)
+        p_market = norm.cdf(norm.ppf(p_physical) + lambdas)
+        outcomes = (rng.uniform(size=n) < p_physical).astype(float)
+
+        mle = WangMLE()
+        X = mle.build_design_matrix(volumes=volumes)
+        result = mle.fit(prices=p_market, outcomes=outcomes, covariates=X)
+
+        p_star, lower, upper = result.predict_interval(0.5, covariates=X[0])
+
+        eta = norm.ppf(0.5) - X[0] @ np.asarray(result.beta)
+        se = np.sqrt(X[0] @ result.vcov_robust @ X[0])
+        z = norm.ppf(0.975)
+
+        assert p_star == pytest.approx(norm.cdf(eta))
+        assert lower == pytest.approx(norm.cdf(eta - z * se))
+        assert upper == pytest.approx(norm.cdf(eta + z * se))
+        assert 0.0 < lower <= p_star <= upper < 1.0
+
+    def test_hierarchical_requires_covariates(self):
+        n = 1000
+        rng = np.random.RandomState(42)
+        from scipy.stats import norm
+
+        volumes = rng.uniform(100, 50000, n)
+        lambdas = 0.25 - 0.06 * np.log(1 + volumes)
+        p_physical = rng.uniform(0.15, 0.85, n)
+        p_market = norm.cdf(norm.ppf(p_physical) + lambdas)
+        outcomes = (rng.uniform(size=n) < p_physical).astype(float)
+
+        mle = WangMLE()
+        X = mle.build_design_matrix(volumes=volumes)
+        result = mle.fit(prices=p_market, outcomes=outcomes, covariates=X)
+
+        with pytest.raises(ValueError, match='covariates are required'):
+            result.predict_interval(0.5)
+
+    def test_bad_covariate_length(self):
+        prices, outcomes, _ = _generate_wang_data(0.20, n=5000)
+        result = WangMLE().fit(prices=prices, outcomes=outcomes)
+
+        with pytest.raises(ValueError, match='covariates must have length'):
+            result.predict_interval(0.5, covariates=np.zeros(0))
+
+    def test_covariates_must_be_vector(self):
+        prices, outcomes, _ = _generate_wang_data(0.20, n=5000)
+        result = WangMLE().fit(prices=prices, outcomes=outcomes)
+
+        with pytest.raises(ValueError, match='1-dimensional'):
+            result.predict_interval(0.5, covariates=np.zeros((1, 1)))
+
+    def test_pooled_rejects_covariates(self):
+        prices, outcomes, _ = _generate_wang_data(0.20, n=5000)
+        result = WangMLE().fit(prices=prices, outcomes=outcomes)
+
+        with pytest.raises(ValueError, match='pooled model'):
+            result.predict_interval(0.5, covariates=np.zeros(1))
+
+    def test_unfitted_model(self):
+        with pytest.raises(ValueError, match='vcov_robust'):
+            MLEResult().predict_interval(0.5)
+
+    def test_nonfinite_covariance_rejected(self):
+        result = MLEResult(
+            beta=[0.2],
+            vcov_robust=np.array([[np.nan]]),
+            n_params=1,
+        )
+        with pytest.raises(ValueError, match='non-finite'):
+            result.predict_interval(0.5)
+
+    def test_negative_variance_rejected(self):
+        result = MLEResult(
+            beta=[0.2],
+            vcov_robust=np.array([[-1.0]]),
+            n_params=1,
+        )
+        with pytest.raises(ValueError, match='negative'):
+            result.predict_interval(0.5)
+
+    def test_covariance_shape_mismatch_rejected(self):
+        result = MLEResult(
+            beta=[0.2],
+            vcov_robust=np.eye(2),
+            n_params=1,
+        )
+        with pytest.raises(ValueError, match='shape'):
+            result.predict_interval(0.5)
+
+    def test_invalid_alpha_and_market_price(self):
+        prices, outcomes, _ = _generate_wang_data(0.20, n=1000)
+        result = WangMLE().fit(prices=prices, outcomes=outcomes)
+
+        with pytest.raises(ValueError, match='alpha'):
+            result.predict_interval(0.5, alpha=1.0)
+        with pytest.raises(ValueError, match='p_market'):
+            result.predict_interval(0.0)
 
 
 class TestGreeks:

@@ -181,6 +181,109 @@ class MLEResult:
         z = abs(self.z_stat(idx, se_type))
         return float(2 * (1 - stats.norm.cdf(z)))
 
+    def predict_interval(
+        self,
+        p_market: float,
+        alpha: float = 0.05,
+        covariates: object | None = None,
+    ) -> tuple[float, float, float]:
+        """Confidence interval for the fair-value probability.
+
+        The fair value is the physical probability implied by the fitted Wang
+        transform, ``p_star = Phi(Phi^{-1}(p_market) - lambda_hat)``. The
+        interval is constructed with the delta method from the robust
+        covariance matrix stored on the result. It is a first-order
+        approximation and treats ``p_market`` as fixed.
+
+        Parameters
+        ----------
+        p_market:
+            Observed market price in ``(0, 1)``.
+        alpha:
+            Significance level in ``(0, 1)``. The interval has coverage
+            ``1 - alpha``.
+        covariates:
+            For a hierarchical model, a vector of covariates with one value
+            per estimated parameter. Omit for a pooled model.
+
+        Returns
+        -------
+        tuple[float, float, float]
+            ``(p_star_hat, lower, upper)``.
+
+        Raises
+        ------
+        ValueError
+            If the model has not been fitted, ``alpha`` or ``p_market`` is
+            outside its valid range, covariates are missing for a
+            hierarchical model, or the covariate length does not match the
+            number of parameters.
+        """
+        np = _require_numpy()
+        _, _, stats = _require_scipy()
+
+        if self.vcov_robust is None:
+            raise ValueError(
+                'vcov_robust is None; fit the model before calling predict_interval'
+            )
+        if not 0.0 < alpha < 1.0:
+            raise ValueError(f'alpha must be in (0, 1); got {alpha}')
+        if not 0.0 < p_market < 1.0:
+            raise ValueError(f'p_market must be in (0, 1); got {p_market}')
+
+        beta = np.asarray(self.beta, dtype=np.float64)
+        vcov = np.asarray(self.vcov_robust, dtype=np.float64)
+        if beta.size == 0:
+            raise ValueError('beta is empty; fit the model first')
+        if not np.isfinite(beta).all():
+            raise ValueError('beta contains non-finite values; fit the model again')
+        if vcov.shape != (beta.size, beta.size):
+            raise ValueError(
+                'vcov_robust must have shape '
+                f'({beta.size}, {beta.size}); got {vcov.shape}'
+            )
+        if not np.isfinite(vcov).all():
+            raise ValueError(
+                'vcov_robust contains non-finite values; fit the model again'
+            )
+
+        z_market = float(stats.norm.ppf(p_market))
+        if covariates is None:
+            if beta.size != 1:
+                raise ValueError(
+                    'covariates are required for a hierarchical model '
+                    f'with {beta.size} parameters'
+                )
+            eta = z_market - float(beta[0])
+            var_eta = float(vcov[0, 0])
+        else:
+            x = np.asarray(covariates, dtype=np.float64)
+            if x.ndim != 1:
+                raise ValueError('covariates must be a 1-dimensional array')
+            if x.size != beta.size:
+                raise ValueError(
+                    f'covariates must have length {beta.size}; got {x.size}'
+                )
+            if beta.size == 1:
+                raise ValueError('covariates are not supported for a pooled model')
+            eta = z_market - float(x @ beta)
+            var_eta = float(x @ vcov @ x)
+
+        if not math.isfinite(var_eta):
+            raise ValueError('fair-value variance is not finite')
+        if var_eta < 0.0:
+            if var_eta > -1e-12:
+                var_eta = 0.0
+            else:
+                raise ValueError('fair-value variance is negative')
+
+        se_eta = math.sqrt(var_eta)
+        z = float(stats.norm.ppf(1.0 - alpha / 2.0))
+        p_star = float(stats.norm.cdf(eta))
+        lower = float(stats.norm.cdf(eta - z * se_eta))
+        upper = float(stats.norm.cdf(eta + z * se_eta))
+        return p_star, lower, upper
+
     def summary_table(self) -> str:
         """Generate a formatted summary table."""
         lines = [
