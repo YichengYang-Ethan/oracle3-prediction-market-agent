@@ -107,7 +107,7 @@ Use the same project for research scripts, agent strategies, and engine operatio
 | [Pricing](oracle3/pricing/) | Wang-transform models and estimators for research |
 | [oracle3-extras](https://github.com/YichengYang-Ethan/oracle3-extras) | Optional venue, data-provider, and wallet integrations |
 
-[CLI guide](docs/CLI_MONITORING.md) · [Integration guide](docs/extras.md) · [Execution reference](docs/runtime-integrity.md)
+[CLI guide](docs/CLI_MONITORING.md) · [Integration guide](docs/extras.md) · [Execution reference](docs/runtime-integrity.md) · [Wang MLE tutorial](notebooks/wang_mle_tutorial.ipynb)
 
 ## Built for experimentation
 
