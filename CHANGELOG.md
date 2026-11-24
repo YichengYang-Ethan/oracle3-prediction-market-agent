@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-24
+
+### Added
+
+- `MLEResult.predict_interval(p_market, alpha=0.05, covariates=None)`: a delta-method confidence interval for the Wang-transform fair value, for pooled and hierarchical fits (#74, thanks @LuYuan-Zjyy).
+- `notebooks/wang_mle_tutorial.ipynb`: a worked example of pooled and hierarchical Wang MLE estimation, the likelihood-ratio test, and Greeks and Kelly sizing on synthetic data (#82, thanks @MeowLuckly).
+
+### Changed
+
+- `CrossMarketArbitrageStrategy` prices each leg with its venue's published fee schedule from `oracle3.fees` instead of a flat 0.005 per side. Pairs whose fee cannot be established are skipped, and `fee_per_side` remains available as an explicit flat override (#70, thanks @noesis-bot).
+- Locked dependency updates: mcp 1.30.0, uvicorn 0.54.0 and requests 2.34.2 (#83).
+
+### Fixed
+
+- `kelly_fraction` returns 0 for non-finite inputs instead of a maximum-size bet for a NaN lambda, and rejects a negative `fee_rate` (#77, thanks @dbdefault).
+
 ## [1.3.0] - 2026-11-15
 
 ### Added
